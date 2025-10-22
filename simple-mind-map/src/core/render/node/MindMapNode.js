@@ -1,6 +1,6 @@
 import Style from './Style'
 import Shape from './Shape'
-import { G, Rect, Text } from '@svgdotjs/svg.js'
+import { G, Rect, Text, SVG } from '@svgdotjs/svg.js'
 import nodeGeneralizationMethods from './nodeGeneralization'
 import nodeExpandBtnMethods from './nodeExpandBtn'
 import nodeCommandWrapsMethods from './nodeCommandWraps'
@@ -8,13 +8,10 @@ import nodeCreateContentsMethods from './nodeCreateContents'
 import nodeExpandBtnPlaceholderRectMethods from './nodeExpandBtnPlaceholderRect'
 import nodeModifyWidthMethods from './nodeModifyWidth'
 import nodeCooperateMethods from './nodeCooperate'
+import quickCreateChildBtnMethods from './quickCreateChildBtn'
+import nodeLayoutMethods from './nodeLayout'
 import { CONSTANTS } from '../../../constants/constant'
-import {
-  copyNodeTree,
-  createForeignObjectNode,
-  createUid,
-  addXmlns
-} from '../../../utils/index'
+import { copyNodeTree, createUid, addXmlns } from '../../../utils/index'
 
 //  节点类
 class MindMapNode {
@@ -89,7 +86,6 @@ class MindMapNode {
     this.noteEl = null
     this.noteContentIsShow = false
     this._attachmentData = null
-    this._numberData = null
     this._prefixData = null
     this._postfixData = null
     this._expandBtn = null
@@ -103,22 +99,16 @@ class MindMapNode {
     this._generalizationList = []
     this._unVisibleRectRegionNode = null
     this._isMouseenter = false
+    this._customContentAddToNodeAdd = null
     // 尺寸信息
     this._rectInfo = {
-      imgContentWidth: 0,
-      imgContentHeight: 0,
       textContentWidth: 0,
-      textContentHeight: 0
+      textContentHeight: 0,
+      textContentWidthWithoutTag: 0
     }
     // 概要节点的宽高
     this._generalizationNodeWidth = 0
     this._generalizationNodeHeight = 0
-    // 编号字符
-    this.number = opt.number || ''
-    // 各种文字信息的间距
-    this.textContentItemMargin = this.mindMap.opt.textContentMargin
-    // 图片和文字节点的间距
-    this.blockContentMargin = this.mindMap.opt.imgTextMargin
     // 展开收缩按钮尺寸
     this.expandBtnSize = this.mindMap.opt.expandBtnSize
     // 是否是多选节点
@@ -129,6 +119,10 @@ class MindMapNode {
     this.isHide = false
     const proto = Object.getPrototypeOf(this)
     if (!proto.bindEvent) {
+      // 节点尺寸计算和布局相关方法
+      Object.keys(nodeLayoutMethods).forEach(item => {
+        proto[item] = nodeLayoutMethods[item]
+      })
       // 概要相关方法
       Object.keys(nodeGeneralizationMethods).forEach(item => {
         proto[item] = nodeGeneralizationMethods[item]
@@ -159,10 +153,19 @@ class MindMapNode {
       Object.keys(nodeModifyWidthMethods).forEach(item => {
         proto[item] = nodeModifyWidthMethods[item]
       })
+      // 快捷创建子节点按钮
+      if (this.mindMap.opt.isShowCreateChildBtnIcon) {
+        Object.keys(quickCreateChildBtnMethods).forEach(item => {
+          proto[item] = quickCreateChildBtnMethods[item]
+        })
+        this.initQuickCreateChildBtn()
+      }
       proto.bindEvent = true
     }
     // 初始化
     this.getSize()
+    // 初始需要计算一下概要节点的大小，否则计算布局时获取不到概要的大小
+    this.updateGeneralization()
     this.initDragHandle()
   }
 
@@ -207,14 +210,15 @@ class MindMapNode {
   }
 
   //  创建节点的各个内容对象数据
-  // recreateTypes：[] custom、image、icon、text、hyperlink、tag、note、attachment、numbers、prefix、postfix
+  // recreateTypes：[] custom、image、icon、text、hyperlink、tag、note、attachment、numbers、prefix、postfix、checkbox
   createNodeData(recreateTypes) {
     // 自定义节点内容
-    let {
+    const {
       isUseCustomNodeContent,
       customCreateNodeContent,
       createNodePrefixContent,
-      createNodePostfixContent
+      createNodePostfixContent,
+      addCustomContentToNode
     } = this.mindMap.opt
     // 需要创建的内容类型
     const typeList = [
@@ -226,9 +230,14 @@ class MindMapNode {
       'tag',
       'note',
       'attachment',
-      'numbers',
       'prefix',
-      'postfix'
+      'postfix',
+      ...this.mindMap.nodeInnerPrefixList.map(item => {
+        return item.name
+      }),
+      ...this.mindMap.nodeInnerPostfixList.map(item => {
+        return item.name
+      })
     ]
     const createTypes = {}
     if (Array.isArray(recreateTypes)) {
@@ -264,9 +273,11 @@ class MindMapNode {
     if (createTypes.note) this._noteData = this.createNoteNode()
     if (createTypes.attachment)
       this._attachmentData = this.createAttachmentNode()
-    if (this.mindMap.numbers && createTypes.numbers) {
-      this._numberData = this.mindMap.numbers.createNumberContent(this)
-    }
+    this.mindMap.nodeInnerPrefixList.forEach(item => {
+      if (createTypes[item.name]) {
+        this[`_${item.name}Data`] = item.createContent(this)
+      }
+    })
     if (createTypes.prefix) {
       this._prefixData = createNodePrefixContent
         ? createNodePrefixContent(this)
@@ -283,339 +294,42 @@ class MindMapNode {
         addXmlns(this._postfixData.el)
       }
     }
+    this.mindMap.nodeInnerPostfixList.forEach(item => {
+      if (createTypes[item.name]) {
+        this[`_${item.name}Data`] = item.createContent(this)
+      }
+    })
+    if (
+      addCustomContentToNode &&
+      typeof addCustomContentToNode.create === 'function'
+    ) {
+      this._customContentAddToNodeAdd = addCustomContentToNode.create(this)
+      if (
+        this._customContentAddToNodeAdd &&
+        this._customContentAddToNodeAdd.el
+      ) {
+        addXmlns(this._customContentAddToNodeAdd.el)
+      }
+    }
   }
 
   //  计算节点的宽高
-  getSize(recreateTypes) {
+  getSize(recreateTypes, opt = {}) {
+    const ignoreUpdateCustomTextWidth = opt.ignoreUpdateCustomTextWidth || false
+    if (!ignoreUpdateCustomTextWidth) {
+      this.customTextWidth = this.getData('customTextWidth') || undefined
+    }
     this.customLeft = this.getData('customLeft') || undefined
     this.customTop = this.getData('customTop') || undefined
     // 这里不要更新概要，不然即使概要没修改，每次也会重新渲染
     // this.updateGeneralization()
     this.createNodeData(recreateTypes)
-    let { width, height } = this.getNodeRect()
+    const { width, height } = this.getNodeRect()
     // 判断节点尺寸是否有变化
-    let changed = this.width !== width || this.height !== height
+    const changed = this.width !== width || this.height !== height
     this.width = width
     this.height = height
     return changed
-  }
-
-  //  计算节点尺寸信息
-  getNodeRect() {
-    // 自定义节点内容
-    if (this.isUseCustomNodeContent()) {
-      let rect = this.measureCustomNodeContentSize(this._customNodeContent)
-      return {
-        width: this.hasCustomWidth() ? this.customTextWidth : rect.width,
-        height: rect.height
-      }
-    }
-    const { tagPosition } = this.mindMap.opt
-    const tagIsBottom = tagPosition === CONSTANTS.TAG_POSITION.BOTTOM
-    // 宽高
-    let imgContentWidth = 0
-    let imgContentHeight = 0
-    let textContentWidth = 0
-    let textContentHeight = 0
-    let tagContentWidth = 0
-    let tagContentHeight = 0
-    // 存在图片
-    if (this._imgData) {
-      this._rectInfo.imgContentWidth = imgContentWidth = this._imgData.width
-      this._rectInfo.imgContentHeight = imgContentHeight = this._imgData.height
-    }
-    // 编号内容
-    if (this._numberData) {
-      textContentWidth += this._numberData.width
-      textContentHeight = Math.max(textContentHeight, this._numberData.height)
-    }
-    // 自定义前置内容
-    if (this._prefixData) {
-      textContentWidth += this._prefixData.width
-      textContentHeight = Math.max(textContentHeight, this._prefixData.height)
-    }
-    // 图标
-    if (this._iconData.length > 0) {
-      textContentWidth += this._iconData.reduce((sum, cur) => {
-        textContentHeight = Math.max(textContentHeight, cur.height)
-        return (sum += cur.width + this.textContentItemMargin)
-      }, 0)
-    }
-    // 文字
-    if (this._textData) {
-      textContentWidth += this._textData.width
-      textContentHeight = Math.max(textContentHeight, this._textData.height)
-    }
-    // 超链接
-    if (this._hyperlinkData) {
-      textContentWidth += this._hyperlinkData.width
-      textContentHeight = Math.max(
-        textContentHeight,
-        this._hyperlinkData.height
-      )
-    }
-    // 标签
-    if (this._tagData.length > 0) {
-      let maxTagHeight = 0
-      const totalTagWidth = this._tagData.reduce((sum, cur) => {
-        maxTagHeight = Math.max(maxTagHeight, cur.height)
-        return (sum += cur.width + this.textContentItemMargin)
-      }, 0)
-      if (tagIsBottom) {
-        // 文字下方
-        tagContentWidth = totalTagWidth
-        tagContentHeight = maxTagHeight
-      } else {
-        // 否则在右侧
-        textContentWidth += totalTagWidth
-        textContentHeight = Math.max(textContentHeight, maxTagHeight)
-      }
-    }
-    // 备注
-    if (this._noteData) {
-      textContentWidth += this._noteData.width
-      textContentHeight = Math.max(textContentHeight, this._noteData.height)
-    }
-    // 附件
-    if (this._attachmentData) {
-      textContentWidth += this._attachmentData.width
-      textContentHeight = Math.max(
-        textContentHeight,
-        this._attachmentData.height
-      )
-    }
-    // 自定义后置内容
-    if (this._postfixData) {
-      textContentWidth += this._postfixData.width
-      textContentHeight = Math.max(textContentHeight, this._postfixData.height)
-    }
-    // 文字内容部分的尺寸
-    this._rectInfo.textContentWidth = textContentWidth
-    this._rectInfo.textContentHeight = textContentHeight
-    // 间距
-    let margin =
-      imgContentHeight > 0 && textContentHeight > 0
-        ? this.blockContentMargin
-        : 0
-    let { paddingX, paddingY } = this.getPaddingVale()
-    // 纯内容宽高
-    let _width = Math.max(imgContentWidth, textContentWidth)
-    let _height = imgContentHeight + textContentHeight
-    // 如果标签在文字下方
-    if (tagIsBottom && tagContentHeight > 0 && textContentHeight > 0) {
-      // 那么文字和标签之间也需要间距
-      margin += this.blockContentMargin
-      // 整体高度要考虑标签宽度
-      _width = Math.max(_width, tagContentWidth)
-      // 整体高度要加上标签的高度
-      _height += tagContentHeight
-    }
-    // 计算节点形状需要的附加内边距
-    let { paddingX: shapePaddingX, paddingY: shapePaddingY } =
-      this.shapeInstance.getShapePadding(_width, _height, paddingX, paddingY)
-    this.shapePadding.paddingX = shapePaddingX
-    this.shapePadding.paddingY = shapePaddingY
-    // 边框宽度，因为边框是以中线向两端发散，所以边框会超出节点
-    const borderWidth = this.getBorderWidth()
-    return {
-      width: _width + paddingX * 2 + shapePaddingX * 2 + borderWidth,
-      height: _height + paddingY * 2 + margin + shapePaddingY * 2 + borderWidth
-    }
-  }
-
-  //  定位节点内容
-  layout() {
-    if (!this.group) return
-    // 清除之前的内容
-    this.group.clear()
-    const { hoverRectPadding, tagPosition, openRealtimeRenderOnNodeTextEdit } =
-      this.mindMap.opt
-    let { width, height, textContentItemMargin } = this
-    let { paddingY } = this.getPaddingVale()
-    const halfBorderWidth = this.getBorderWidth() / 2
-    paddingY += this.shapePadding.paddingY + halfBorderWidth
-    // 节点形状
-    this.shapeNode = this.shapeInstance.createShape()
-    this.shapeNode.addClass('smm-node-shape')
-    this.shapeNode.translate(halfBorderWidth, halfBorderWidth)
-    this.style.shape(this.shapeNode)
-    this.group.add(this.shapeNode)
-    // 渲染一个隐藏的矩形区域，用来触发展开收起按钮的显示
-    this.renderExpandBtnPlaceholderRect()
-    // 创建协同头像节点
-    if (this.createUserListNode) this.createUserListNode()
-    // 概要节点添加一个带所属节点id的类名
-    if (this.isGeneralization && this.generalizationBelongNode) {
-      this.group.addClass('generalization_' + this.generalizationBelongNode.uid)
-    }
-    // 激活hover和激活边框
-    const addHoverNode = () => {
-      this.hoverNode = new Rect()
-        .size(width + hoverRectPadding * 2, height + hoverRectPadding * 2)
-        .x(-hoverRectPadding)
-        .y(-hoverRectPadding)
-      this.hoverNode.addClass('smm-hover-node')
-      this.style.hoverNode(this.hoverNode, width, height)
-      this.group.add(this.hoverNode)
-    }
-    // 如果存在自定义节点内容，那么使用自定义节点内容
-    if (this.isUseCustomNodeContent()) {
-      const foreignObject = createForeignObjectNode({
-        el: this._customNodeContent,
-        width,
-        height
-      })
-      this.group.add(foreignObject)
-      addHoverNode()
-      return
-    }
-    const tagIsBottom = tagPosition === CONSTANTS.TAG_POSITION.BOTTOM
-    const { textContentHeight } = this._rectInfo
-    // 图片节点
-    let imgHeight = 0
-    if (this._imgData) {
-      imgHeight = this._imgData.height
-      this.group.add(this._imgData.node)
-      this._imgData.node.cx(width / 2).y(paddingY)
-    }
-    // 内容节点
-    let textContentNested = new G()
-    let textContentOffsetX = 0
-    // 编号内容
-    if (this._numberData) {
-      this._numberData.node
-        .x(textContentOffsetX)
-        .y((textContentHeight - this._numberData.height) / 2)
-      textContentNested.add(this._numberData.node)
-      textContentOffsetX += this._numberData.width + textContentItemMargin
-    }
-    // 自定义前置内容
-    if (this._prefixData) {
-      const foreignObject = createForeignObjectNode({
-        el: this._prefixData.el,
-        width: this._prefixData.width,
-        height: this._prefixData.height
-      })
-      foreignObject
-        .x(textContentOffsetX)
-        .y((textContentHeight - this._prefixData.height) / 2)
-      textContentNested.add(foreignObject)
-      textContentOffsetX += this._prefixData.width + textContentItemMargin
-    }
-    // icon
-    let iconNested = new G()
-    if (this._iconData && this._iconData.length > 0) {
-      let iconLeft = 0
-      this._iconData.forEach(item => {
-        item.node
-          .x(textContentOffsetX + iconLeft)
-          .y((textContentHeight - item.height) / 2)
-        iconNested.add(item.node)
-        iconLeft += item.width + textContentItemMargin
-      })
-      textContentNested.add(iconNested)
-      textContentOffsetX += iconLeft
-    }
-    // 文字
-    if (this._textData) {
-      const oldX = this._textData.node.attr('data-offsetx') || 0
-      this._textData.node.attr('data-offsetx', textContentOffsetX)
-      // 修复safari浏览器节点存在图标时文字位置不正确的问题
-      ;(this._textData.nodeContent || this._textData.node)
-        .x(-oldX) // 修复非富文本模式下同时存在图标和换行的文本时，被收起和展开时图标与文字距离会逐渐拉大的问题
-        .x(textContentOffsetX)
-        .y((textContentHeight - this._textData.height) / 2)
-      // 如果开启了文本编辑实时渲染，需要判断当前渲染的节点是否是正在编辑的节点，是的话将透明度设置为0不显示
-      if (openRealtimeRenderOnNodeTextEdit) {
-        this._textData.node.opacity(
-          this.mindMap.renderer.textEdit.getCurrentEditNode() === this ? 0 : 1
-        )
-      }
-      textContentNested.add(this._textData.node)
-      textContentOffsetX += this._textData.width + textContentItemMargin
-    }
-    // 超链接
-    if (this._hyperlinkData) {
-      this._hyperlinkData.node
-        .x(textContentOffsetX)
-        .y((textContentHeight - this._hyperlinkData.height) / 2)
-      textContentNested.add(this._hyperlinkData.node)
-      textContentOffsetX += this._hyperlinkData.width + textContentItemMargin
-    }
-    // 标签
-    let tagNested = new G()
-    if (this._tagData && this._tagData.length > 0) {
-      if (tagIsBottom) {
-        // 标签显示在文字下方
-        let tagLeft = 0
-        this._tagData.forEach(item => {
-          item.node.x(tagLeft).y(0)
-          tagNested.add(item.node)
-          tagLeft += item.width + textContentItemMargin
-        })
-        tagNested.cx(width / 2).y(
-          paddingY + // 内边距
-            imgHeight + // 图片高度
-            textContentHeight + // 文本区域高度
-            (imgHeight > 0 && textContentHeight > 0
-              ? this.blockContentMargin
-              : 0) + // 图片和文本之间的间距
-            this.blockContentMargin // 标签和文本之间的间距
-        )
-        this.group.add(tagNested)
-      } else {
-        // 标签显示在文字右侧
-        let tagLeft = 0
-        this._tagData.forEach(item => {
-          item.node
-            .x(textContentOffsetX + tagLeft)
-            .y((textContentHeight - item.height) / 2)
-          tagNested.add(item.node)
-          tagLeft += item.width + textContentItemMargin
-        })
-        textContentNested.add(tagNested)
-        textContentOffsetX += tagLeft
-      }
-    }
-    // 备注
-    if (this._noteData) {
-      this._noteData.node
-        .x(textContentOffsetX)
-        .y((textContentHeight - this._noteData.height) / 2)
-      textContentNested.add(this._noteData.node)
-      textContentOffsetX += this._noteData.width
-    }
-    // 附件
-    if (this._attachmentData) {
-      this._attachmentData.node
-        .x(textContentOffsetX)
-        .y((textContentHeight - this._attachmentData.height) / 2)
-      textContentNested.add(this._attachmentData.node)
-      textContentOffsetX += this._attachmentData.width
-    }
-    // 自定义后置内容
-    if (this._postfixData) {
-      const foreignObject = createForeignObjectNode({
-        el: this._postfixData.el,
-        width: this._postfixData.width,
-        height: this._postfixData.height
-      })
-      foreignObject
-        .x(textContentOffsetX)
-        .y((textContentHeight - this._postfixData.height) / 2)
-      textContentNested.add(foreignObject)
-      textContentOffsetX += this._postfixData.width
-    }
-    this.group.add(textContentNested)
-    // 文字内容整体
-    textContentNested.translate(
-      width / 2 - textContentNested.bbox().width / 2,
-      paddingY + // 内边距
-        imgHeight + // 图片高度
-        (imgHeight > 0 && textContentHeight > 0 ? this.blockContentMargin : 0) // 和图片的间距
-    )
-    addHoverNode()
-    this.mindMap.emit('node_layout_end', this)
   }
 
   // 给节点绑定事件
@@ -663,7 +377,7 @@ class MindMapNode {
       // 多选和取消多选
       if (!readonly && (e.ctrlKey || e.metaKey) && enableCtrlKeyNodeSelection) {
         this.isMultipleChoice = true
-        let isActive = this.getData('isActive')
+        const isActive = this.getData('isActive')
         if (!isActive)
           this.mindMap.emit(
             'before_node_active',
@@ -769,10 +483,15 @@ class MindMapNode {
       return
     }
     this.updateNodeActiveClass()
-    const { alwaysShowExpandBtn, notShowExpandBtn } = this.mindMap.opt
+    const {
+      alwaysShowExpandBtn,
+      notShowExpandBtn,
+      isShowCreateChildBtnIcon,
+      readonly
+    } = this.mindMap.opt
+    const childrenLength = this.getChildrenLength()
     // 不显示展开收起按钮则不需要处理
     if (!notShowExpandBtn) {
-      const childrenLength = this.nodeData.children.length
       if (alwaysShowExpandBtn) {
         // 需要移除展开收缩按钮
         if (this._expandBtn && childrenLength <= 0) {
@@ -782,7 +501,7 @@ class MindMapNode {
           this.renderExpandBtn()
         }
       } else {
-        let { isActive, expand } = this.getData()
+        const { isActive, expand } = this.getData()
         // 展开状态且非激活状态，且当前鼠标不在它上面，才隐藏
         if (childrenLength <= 0) {
           this.removeExpandBtn()
@@ -793,6 +512,19 @@ class MindMapNode {
         }
       }
     }
+    // 更新快速创建子节点按钮
+    if (isShowCreateChildBtnIcon) {
+      if (childrenLength > 0) {
+        this.removeQuickCreateChildBtn()
+      } else {
+        const { isActive } = this.getData()
+        if (isActive) {
+          this.showQuickCreateChildBtn()
+        } else {
+          this.hideQuickCreateChildBtn()
+        }
+      }
+    }
     // 更新拖拽手柄的显示与否
     this.updateDragHandle()
     // 更新概要
@@ -800,9 +532,9 @@ class MindMapNode {
     // 更新协同头像
     if (this.updateUserListNode) this.updateUserListNode()
     // 更新节点位置
-    let t = this.group.transform()
+    const t = this.group.transform()
     // 保存一份当前节点数据快照
-    this.nodeDataSnapshot = JSON.stringify(this.getData())
+    this.nodeDataSnapshot = readonly ? '' : JSON.stringify(this.getData())
     // 节点位置变化才更新，因为即使值没有变化属性设置操作也是耗时的
     if (this.left !== t.translateX || this.top !== t.translateY) {
       this.group.translate(this.left - t.translateX, this.top - t.translateY)
@@ -811,10 +543,10 @@ class MindMapNode {
 
   // 获取节点相当于画布的位置
   getNodePosInClient(_left, _top) {
-    let drawTransform = this.mindMap.draw.transform()
-    let { scaleX, scaleY, translateX, translateY } = drawTransform
-    let left = _left * scaleX + translateX
-    let top = _top * scaleY + translateY
+    const drawTransform = this.mindMap.draw.transform()
+    const { scaleX, scaleY, translateX, translateY } = drawTransform
+    const left = _left * scaleX + translateX
+    const top = _top * scaleY + translateY
     return {
       left,
       top
@@ -833,8 +565,8 @@ class MindMapNode {
   }
 
   // 重新渲染节点，即重新创建节点内容、计算节点大小、计算节点内容布局、更新展开收起按钮，概要及位置
-  reRender(recreateTypes) {
-    let sizeChange = this.getSize(recreateTypes)
+  reRender(recreateTypes, opt) {
+    const sizeChange = this.getSize(recreateTypes, opt)
     this.layout()
     this.update()
     return sizeChange
@@ -850,11 +582,18 @@ class MindMapNode {
   // 根据是否激活更新节点
   updateNodeByActive(active) {
     if (this.group) {
+      const { isShowCreateChildBtnIcon } = this.mindMap.opt
       // 切换激活状态，需要切换展开收起按钮的显隐
       if (active) {
         this.showExpandBtn()
+        if (isShowCreateChildBtnIcon) {
+          this.showQuickCreateChildBtn()
+        }
       } else {
         this.hideExpandBtn()
+        if (isShowCreateChildBtnIcon) {
+          this.hideQuickCreateChildBtn()
+        }
       }
       this.updateNodeActiveClass()
       this.updateDragHandle()
@@ -984,7 +723,7 @@ class MindMapNode {
     if (this.group) this.group.hide()
     this.hideGeneralization()
     if (this.parent) {
-      let index = this.parent.children.indexOf(this)
+      const index = this.parent.children.indexOf(this)
       this.parent._lines[index] && this.parent._lines[index].hide()
       this._lines.forEach(item => {
         item.hide()
@@ -1006,7 +745,7 @@ class MindMapNode {
     this.group.show()
     this.showGeneralization()
     if (this.parent) {
-      let index = this.parent.children.indexOf(this)
+      const index = this.parent.children.indexOf(this)
       this.parent._lines[index] && this.parent._lines[index].show()
       this._lines.forEach(item => {
         item.show()
@@ -1077,13 +816,12 @@ class MindMapNode {
     if (this.getData('expand') === false) {
       return
     }
-    let childrenLen = this.nodeData.children.length
+    let childrenLen = this.getChildrenLength()
     // 切换为鱼骨结构时，清空根节点和二级节点的连线
-    if (
-      this.mindMap.opt.layout === CONSTANTS.LAYOUT.FISHBONE &&
-      (this.isRoot || this.layerIndex === 1)
-    ) {
-      childrenLen = 0
+    if (this.mindMap.renderer.layout.nodeIsRemoveAllLines) {
+      if (this.mindMap.renderer.layout.nodeIsRemoveAllLines(this)) {
+        childrenLen = 0
+      }
     }
     if (childrenLen > this._lines.length) {
       // 创建缺少的线
@@ -1159,15 +897,18 @@ class MindMapNode {
 
   //  设置连线样式
   styleLine(line, childNode, enableMarker) {
+    const { enableInheritAncestorLineStyle } = this.mindMap.opt
+    const getName = enableInheritAncestorLineStyle
+      ? 'getSelfInhertStyle'
+      : 'getSelfStyle'
     const width =
-      childNode.getSelfInhertStyle('lineWidth') ||
-      childNode.getStyle('lineWidth', true)
+      childNode[getName]('lineWidth') || childNode.getStyle('lineWidth', true)
     const color =
-      childNode.getSelfInhertStyle('lineColor') ||
+      childNode[getName]('lineColor') ||
       this.getRainbowLineColor(childNode) ||
       childNode.getStyle('lineColor', true)
     const dasharray =
-      childNode.getSelfInhertStyle('lineDasharray') ||
+      childNode[getName]('lineDasharray') ||
       childNode.getStyle('lineDasharray', true)
     this.style.line(
       line,
@@ -1252,7 +993,7 @@ class MindMapNode {
 
   //  获取某个样式
   getStyle(prop, root) {
-    let v = this.style.merge(prop, root)
+    const v = this.style.merge(prop, root)
     return v === undefined ? '' : v
   }
 
@@ -1317,11 +1058,11 @@ class MindMapNode {
 
   // 获取节点的尺寸和位置信息，宽高是应用了缩放效果后的实际宽高，位置信息相对于画布
   getRectInSvg() {
-    let { scaleX, scaleY, translateX, translateY } =
+    const { scaleX, scaleY, translateX, translateY } =
       this.mindMap.draw.transform()
     let { left, top, width, height } = this
-    let right = (left + width) * scaleX + translateX
-    let bottom = (top + height) * scaleY + translateY
+    const right = (left + width) * scaleX + translateX
+    const bottom = (top + height) * scaleY + translateY
     left = left * scaleX + translateX
     top = top * scaleY + translateY
     return {
@@ -1362,6 +1103,15 @@ class MindMapNode {
     return new Text().text(text)
   }
 
+  // 获取SVG.js库的一些对象
+  getSvgObjects() {
+    return {
+      SVG,
+      G,
+      Rect
+    }
+  }
+
   // 检查是否支持拖拽调整宽度
   // 1.富文本模式
   // 2.自定义节点内容
@@ -1384,6 +1134,11 @@ class MindMapNode {
       this.checkEnableDragModifyNodeWidth() &&
       this.customTextWidth !== undefined
     )
+  }
+
+  // 获取子节点的数量
+  getChildrenLength() {
+    return this.nodeData.children ? this.nodeData.children.length : 0
   }
 }
 

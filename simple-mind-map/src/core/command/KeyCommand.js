@@ -12,7 +12,21 @@ export default class KeyCommand {
     this.shortcutMapCache = {}
     this.isPause = false
     this.isInSvg = false
+    this.isStopCheckInSvg = false
+    this.defaultEnableCheck = this.defaultEnableCheck.bind(this)
     this.bindEvent()
+  }
+
+  // 扩展按键映射
+  extendKeyMap(key, code) {
+    keyMap[key] = code
+  }
+
+  // 从按键映射中删除某个键
+  removeKeyMap(key) {
+    if (typeof keyMap[key] !== 'undefined') {
+      delete keyMap[key]
+    }
   }
 
   //  暂停快捷键响应
@@ -45,6 +59,22 @@ export default class KeyCommand {
     this.shortcutMapCache = {}
   }
 
+  // 停止对鼠标是否在画布内的检查，前提是开启了enableShortcutOnlyWhenMouseInSvg选项
+  // 库内部节点文本编辑、关联线文本编辑、外框文本编辑前都会暂停检查，否则无法响应回车快捷键用于结束编辑
+  // 如果你新增了额外的文本编辑，也可以在编辑前调用此方法
+  stopCheckInSvg() {
+    const { enableShortcutOnlyWhenMouseInSvg } = this.mindMap.opt
+    if (!enableShortcutOnlyWhenMouseInSvg) return
+    this.isStopCheckInSvg = true
+  }
+
+  // 恢复对鼠标是否在画布内的检查
+  recoveryCheckInSvg() {
+    const { enableShortcutOnlyWhenMouseInSvg } = this.mindMap.opt
+    if (!enableShortcutOnlyWhenMouseInSvg) return
+    this.isStopCheckInSvg = true
+  }
+
   //  绑定事件
   bindEvent() {
     this.onKeydown = this.onKeydown.bind(this)
@@ -53,13 +83,6 @@ export default class KeyCommand {
       this.isInSvg = true
     })
     this.mindMap.on('svg_mouseleave', () => {
-      if (this.mindMap.renderer.textEdit.isShowTextEdit()) return
-      if (
-        this.mindMap.associativeLine &&
-        this.mindMap.associativeLine.showTextEdit
-      ) {
-        return
-      }
       this.isInSvg = false
     })
     window.addEventListener('keydown', this.onKeydown)
@@ -73,11 +96,37 @@ export default class KeyCommand {
     window.removeEventListener('keydown', this.onKeydown)
   }
 
+  // 根据事件目标判断是否响应快捷键事件
+  defaultEnableCheck(e) {
+    const target = e.target
+    if (target === document.body) return true
+    for (let i = 0; i < this.mindMap.editNodeClassList.length; i++) {
+      const cur = this.mindMap.editNodeClassList[i]
+      if (target.classList.contains(cur)) {
+        return true
+      }
+    }
+    return false
+  }
+
   // 按键事件
   onKeydown(e) {
-    const { enableShortcutOnlyWhenMouseInSvg, beforeShortcutRun } =
-      this.mindMap.opt
-    if (this.isPause || (enableShortcutOnlyWhenMouseInSvg && !this.isInSvg)) {
+    const {
+      enableShortcutOnlyWhenMouseInSvg,
+      beforeShortcutRun,
+      customCheckEnableShortcut
+    } = this.mindMap.opt
+    const checkFn =
+      typeof customCheckEnableShortcut === 'function'
+        ? customCheckEnableShortcut
+        : this.defaultEnableCheck
+    if (!checkFn(e)) return
+    if (
+      this.isPause ||
+      (enableShortcutOnlyWhenMouseInSvg &&
+        !this.isStopCheckInSvg &&
+        !this.isInSvg)
+    ) {
       return
     }
     Object.keys(this.shortcutMap).forEach(key => {

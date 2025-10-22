@@ -8,7 +8,7 @@ function initDragHandle() {
   // 拖拽手柄元素
   this._dragHandleNodes = null
   // 手柄元素的宽度
-  this.dragHandleWidth = 2
+  this.dragHandleWidth = 4
   // 鼠标按下时的x坐标
   this.dragHandleMousedownX = 0
   // 鼠标是否处于按下状态
@@ -71,7 +71,9 @@ function onDragMousemoveHandle(e) {
     this.left = this.dragHandleMousedownLeft + ox / scaleX
   }
   // 自定义内容不重新渲染，交给开发者
-  this.reRender(useCustomContent ? [] : ['text'])
+  this.reRender(useCustomContent ? [] : ['text'], {
+    ignoreUpdateCustomTextWidth: true
+  })
 }
 
 // 鼠标松开事件

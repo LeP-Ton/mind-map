@@ -1,6 +1,10 @@
 <template>
   <Sidebar ref="sidebar" :title="$t('baseStyle.title')">
-    <div class="sidebarContent" :class="{ isDark: isDark }" v-if="data">
+    <div
+      class="sidebarContent customScrollbar"
+      :class="{ isDark: isDark }"
+      v-if="data"
+    >
       <!-- 背景 -->
       <div class="title noTop">{{ $t('baseStyle.background') }}</div>
       <div class="row">
@@ -93,6 +97,30 @@
                 >
                 </el-option>
               </el-select>
+            </div>
+            <!-- 内置背景图片 -->
+            <div
+              class="rowItem spaceBetween"
+              style="margin-top: 8px; margin-bottom: 8px;"
+              v-if="bgList.length > 0"
+            >
+              <div class="name">{{ $t('baseStyle.builtInBackgroundImage') }}</div>
+              <div
+                class="iconBtn el-icon-arrow-down"
+                :class="{ top: !bgListExpand }"
+                @click="bgListExpand = !bgListExpand"
+              ></div>
+            </div>
+            <div class="bgList" :class="{ expand: bgListExpand }">
+              <div
+                class="bgItem"
+                v-for="(item, index) in bgList"
+                :key="index"
+                :class="{active: style.backgroundImage === item}"
+                @click="useBg(item)"
+              >
+                <img :src="item" alt="" />
+              </div>
             </div>
           </el-tab-pane>
         </el-tabs>
@@ -271,6 +299,61 @@
             "
             >{{ $t('baseStyle.showArrow') }}</el-checkbox
           >
+        </div>
+      </div>
+      <!-- 流动效果 -->
+      <div class="row" v-if="supportLineFlow">
+        <div class="rowItem">
+          <span class="name">{{ $t('style.openLineFlow') }}</span>
+          <el-checkbox
+            v-model="style.lineFlow"
+            @change="
+              value => {
+                update('lineFlow', value)
+              }
+            "
+          ></el-checkbox>
+        </div>
+        <div class="rowItem">
+          <span class="name">{{ $t('style.direction') }}</span>
+          <el-select
+            size="mini"
+            style="width: 80px"
+            v-model="style.lineFlowForward"
+            placeholder=""
+            @change="
+              value => {
+                update('lineFlowForward', value)
+              }
+            "
+          >
+            <el-option
+              key="1"
+              :label="$t('style.forward')"
+              :value="true"
+            ></el-option>
+            <el-option
+              key="2"
+              :label="$t('style.reverse')"
+              :value="false"
+            ></el-option>
+          </el-select>
+        </div>
+      </div>
+      <div class="row" v-if="supportLineFlow">
+        <div class="rowItem">
+          <span class="name">{{ $t('style.lineFlowDuration') }}</span>
+          <el-input-number
+            v-model="style.lineFlowDuration"
+            @change="
+              value => {
+                update('lineFlowDuration', value)
+              }
+            "
+            :min="0.1"
+            size="mini"
+            :step="0.5"
+          ></el-input-number>
         </div>
       </div>
       <!-- 彩虹线条 -->
@@ -714,146 +797,6 @@
           ></el-slider>
         </div>
       </div>
-      <!-- 水印 -->
-      <div class="title noTop">{{ $t('baseStyle.watermark') }}</div>
-      <div class="row">
-        <!-- 是否显示水印 -->
-        <div class="rowItem">
-          <el-checkbox
-            v-model="watermarkConfig.show"
-            @change="watermarkShowChange"
-            >{{ $t('baseStyle.showWatermark') }}</el-checkbox
-          >
-        </div>
-      </div>
-      <template v-if="watermarkConfig.show">
-        <!-- 是否仅在导出时显示 -->
-        <div class="row">
-          <div class="rowItem">
-            <el-checkbox
-              v-model="watermarkConfig.onlyExport"
-              @change="updateWatermarkConfig"
-              >{{ $t('baseStyle.onlyExport') }}</el-checkbox
-            >
-          </div>
-        </div>
-        <!-- 是否在节点下方 -->
-        <div class="row">
-          <div class="rowItem">
-            <el-checkbox
-              v-model="watermarkConfig.belowNode"
-              @change="updateWatermarkConfig"
-              >{{ $t('baseStyle.belowNode') }}</el-checkbox
-            >
-          </div>
-        </div>
-        <!-- 水印文字 -->
-        <div class="row">
-          <div class="rowItem">
-            <span class="name">{{ $t('baseStyle.watermarkText') }}</span>
-            <el-input
-              v-model="watermarkConfig.text"
-              size="small"
-              @change="updateWatermarkConfig"
-              @keydown.native.stop
-            ></el-input>
-          </div>
-        </div>
-        <!-- 水印文字颜色 -->
-        <div class="row">
-          <div class="rowItem">
-            <span class="name">{{ $t('baseStyle.watermarkTextColor') }}</span>
-            <span
-              class="block"
-              v-popover:popover3
-              :style="{ backgroundColor: watermarkConfig.textStyle.color }"
-            ></span>
-            <el-popover ref="popover3" placement="bottom" trigger="click">
-              <Color
-                :color="watermarkConfig.textStyle.color"
-                @change="
-                  value => {
-                    watermarkConfig.textStyle.color = value
-                    updateWatermarkConfig()
-                  }
-                "
-              ></Color>
-            </el-popover>
-          </div>
-        </div>
-        <!-- 水印文字透明度 -->
-        <div class="row">
-          <div class="rowItem">
-            <span class="name">{{ $t('baseStyle.watermarkTextOpacity') }}</span>
-            <el-slider
-              v-model="watermarkConfig.textStyle.opacity"
-              style="width: 170px"
-              :min="0"
-              :max="1"
-              :step="0.1"
-              @change="updateWatermarkConfig"
-            ></el-slider>
-          </div>
-        </div>
-        <!-- 水印文字字号 -->
-        <div class="row">
-          <div class="rowItem">
-            <span class="name">{{
-              $t('baseStyle.watermarkTextFontSize')
-            }}</span>
-            <el-input-number
-              v-model="watermarkConfig.textStyle.fontSize"
-              size="small"
-              :min="0"
-              :max="50"
-              :step="1"
-              @change="updateWatermarkConfig"
-              @keydown.native.stop
-            ></el-input-number>
-          </div>
-        </div>
-        <!-- 旋转角度 -->
-        <div class="row">
-          <div class="rowItem">
-            <span class="name">{{ $t('baseStyle.watermarkAngle') }}</span>
-            <el-input-number
-              v-model="watermarkConfig.angle"
-              size="small"
-              :min="0"
-              :max="90"
-              :step="10"
-              @change="updateWatermarkConfig"
-              @keydown.native.stop
-            ></el-input-number>
-          </div>
-        </div>
-        <!-- 水印行间距 -->
-        <div class="row">
-          <div class="rowItem">
-            <span class="name">{{ $t('baseStyle.watermarkLineSpacing') }}</span>
-            <el-input-number
-              v-model="watermarkConfig.lineSpacing"
-              size="small"
-              :step="10"
-              @change="updateWatermarkConfig"
-              @keydown.native.stop
-            ></el-input-number>
-          </div>
-        </div>
-        <!-- 水印文字间距 -->
-        <div class="row">
-          <div class="rowItem">
-            <span class="name">{{ $t('baseStyle.watermarkTextSpacing') }}</span>
-            <el-input-number
-              v-model="watermarkConfig.textSpacing"
-              size="small"
-              :step="10"
-              @change="updateWatermarkConfig"
-              @keydown.native.stop
-            ></el-input-number>
-          </div>
-        </div>
-      </template>
       <!-- 外框内边距 -->
       <div class="title noTop">{{ $t('baseStyle.outerFramePadding') }}</div>
       <div class="row">
@@ -884,169 +827,13 @@
           ></el-slider>
         </div>
       </div>
-      <!-- 其他配置 -->
-      <div class="title noTop">{{ $t('baseStyle.otherConfig') }}</div>
-      <!-- 配置性能模式 -->
-      <div class="row">
-        <div class="rowItem">
-          <el-checkbox
-            v-model="config.openPerformance"
-            @change="
-              value => {
-                updateOtherConfig('openPerformance', value)
-              }
-            "
-            >{{ $t('baseStyle.openPerformance') }}</el-checkbox
-          >
-        </div>
-      </div>
-      <!-- 配置开启自由拖拽 -->
-      <div class="row">
-        <div class="rowItem">
-          <el-checkbox
-            v-model="config.enableFreeDrag"
-            @change="
-              value => {
-                updateOtherConfig('enableFreeDrag', value)
-              }
-            "
-            >{{ $t('baseStyle.enableFreeDrag') }}</el-checkbox
-          >
-        </div>
-      </div>
-      <!-- 配置是否启用富文本编辑 -->
-      <div class="row">
-        <div class="rowItem">
-          <el-checkbox
-            v-model="enableNodeRichText"
-            @change="enableNodeRichTextChange"
-            >{{ $t('baseStyle.isEnableNodeRichText') }}</el-checkbox
-          >
-        </div>
-      </div>
-      <!-- 配置鼠标滚轮行为 -->
-      <div class="row">
-        <div class="rowItem">
-          <span class="name">{{ $t('baseStyle.mousewheelAction') }}</span>
-          <el-select
-            size="mini"
-            style="width: 120px"
-            v-model="config.mousewheelAction"
-            placeholder=""
-            @change="
-              value => {
-                updateOtherConfig('mousewheelAction', value)
-              }
-            "
-          >
-            <el-option
-              :label="$t('baseStyle.zoomView')"
-              value="zoom"
-            ></el-option>
-            <el-option
-              :label="$t('baseStyle.moveViewUpDown')"
-              value="move"
-            ></el-option>
-          </el-select>
-        </div>
-      </div>
-      <!-- 配置鼠标缩放行为 -->
-      <div class="row" v-if="config.mousewheelAction === 'zoom'">
-        <div class="rowItem">
-          <span class="name">{{
-            $t('baseStyle.mousewheelZoomActionReverse')
-          }}</span>
-          <el-select
-            size="mini"
-            style="width: 120px"
-            v-model="config.mousewheelZoomActionReverse"
-            placeholder=""
-            @change="
-              value => {
-                updateOtherConfig('mousewheelZoomActionReverse', value)
-              }
-            "
-          >
-            <el-option
-              :label="$t('baseStyle.mousewheelZoomActionReverse1')"
-              :value="false"
-            ></el-option>
-            <el-option
-              :label="$t('baseStyle.mousewheelZoomActionReverse2')"
-              :value="true"
-            ></el-option>
-          </el-select>
-        </div>
-      </div>
-      <!-- 配置创建新节点时的行为 -->
-      <div class="row">
-        <div class="rowItem">
-          <span class="name">{{ $t('baseStyle.createNewNodeBehavior') }}</span>
-          <el-select
-            size="mini"
-            style="width: 120px"
-            v-model="config.createNewNodeBehavior"
-            placeholder=""
-            @change="
-              value => {
-                updateOtherConfig('createNewNodeBehavior', value)
-              }
-            "
-          >
-            <el-option
-              :label="$t('baseStyle.default')"
-              value="default"
-            ></el-option>
-            <el-option
-              :label="$t('baseStyle.notActive')"
-              value="notActive"
-            ></el-option>
-            <el-option
-              :label="$t('baseStyle.activeOnly')"
-              value="activeOnly"
-            ></el-option>
-          </el-select>
-        </div>
-      </div>
-      <!-- 是否开启文本编辑时实时更新节点大小 -->
-      <div class="row">
-        <div class="rowItem">
-          <el-checkbox
-            v-model="config.openRealtimeRenderOnNodeTextEdit"
-            @change="
-              updateOtherConfig('openRealtimeRenderOnNodeTextEdit', $event)
-            "
-            >{{ $t('baseStyle.openRealtimeRenderOnNodeTextEdit') }}</el-checkbox
-          >
-        </div>
-      </div>
-      <!-- 是否显示滚动条 -->
-      <div class="row">
-        <div class="rowItem">
-          <el-checkbox
-            v-model="localConfigs.isShowScrollbar"
-            @change="updateLocalConfig('isShowScrollbar', $event)"
-            >{{ $t('baseStyle.isShowScrollbar') }}</el-checkbox
-          >
-        </div>
-      </div>
-      <!-- 是否开启手绘风格 -->
-      <div class="row" v-if="supportHandDrawnLikeStyle">
-        <div class="rowItem">
-          <el-checkbox
-            v-model="localConfigs.isUseHandDrawnLikeStyle"
-            @change="updateLocalConfig('isUseHandDrawnLikeStyle', $event)"
-            >{{ $t('baseStyle.isUseHandDrawnLikeStyle') }}</el-checkbox
-          >
-        </div>
-      </div>
     </div>
   </Sidebar>
 </template>
 
 <script>
-import Sidebar from './Sidebar'
-import Color from './Color'
+import Sidebar from './Sidebar.vue'
+import Color from './Color.vue'
 import {
   lineWidthList,
   lineStyleList,
@@ -1059,9 +846,9 @@ import {
   lineStyleMap,
   borderDasharrayList
 } from '@/config'
-import ImgUpload from '@/components/ImgUpload'
-import { storeConfig } from '@/api'
-import { mapState, mapMutations } from 'vuex'
+import ImgUpload from '@/components/ImgUpload/index.vue'
+import { storeData, storeConfig } from '@/api'
+import { mapState } from 'vuex'
 import {
   supportLineStyleLayoutsMap,
   supportLineRadiusLayouts,
@@ -1070,13 +857,8 @@ import {
   rainbowLinesOptions
 } from '@/config/constant'
 
-/**
- * @Author: 王林
- * @Date: 2021-06-24 22:52:56
- * @Desc: 基础样式
- */
+// 基础样式
 export default {
-  name: 'BaseStyle',
   components: {
     Sidebar,
     Color,
@@ -1084,8 +866,10 @@ export default {
   },
   props: {
     data: {
-      type: [Object, null],
-      default: null
+      type: [Object, null]
+    },
+    configData: {
+      type: Object
     },
     mindMap: {
       type: Object
@@ -1107,6 +891,9 @@ export default {
         rootLineKeepSameInCurve: '',
         rootLineStartPositionKeepSameInCurve: '',
         lineRadius: 0,
+        lineFlow: false,
+        lineFlowForward: true,
+        lineFlowDuration: 1,
         generalizationLineWidth: '',
         generalizationLineColor: '',
         associativeLineColor: '',
@@ -1130,40 +917,14 @@ export default {
         marginY: 0,
         nodeUseLineStyle: false
       },
-      config: {
-        openPerformance: false,
-        enableFreeDrag: false,
-        mousewheelAction: 'zoom',
-        mousewheelZoomActionReverse: false,
-        createNewNodeBehavior: 'default',
-        openRealtimeRenderOnNodeTextEdit: true
-      },
-      watermarkConfig: {
-        show: false,
-        onlyExport: false,
-        text: '',
-        lineSpacing: 100,
-        textSpacing: 100,
-        angle: 30,
-        textStyle: {
-          color: '',
-          opacity: 0,
-          fontSize: 1
-        }
-      },
       rainbowLinesPopoverVisible: false,
       curRainbowLineColorList: null,
-      updateWatermarkTimer: null,
-      enableNodeRichText: true,
-      localConfigs: {
-        isShowScrollbar: false,
-        isUseHandDrawnLikeStyle: false
-      },
       currentLayout: '', // 当前结构
       outerFramePadding: {
         outerFramePaddingX: 0,
         outerFramePaddingY: 0
-      }
+      },
+      bgListExpand: true
     }
   },
   computed: {
@@ -1171,7 +932,8 @@ export default {
       activeSidebar: state => state.activeSidebar,
       localConfig: state => state.localConfig,
       isDark: state => state.localConfig.isDark,
-      supportHandDrawnLikeStyle: state => state.supportHandDrawnLikeStyle
+      supportLineFlow: state => state.supportLineFlow,
+      bgList: state => state.bgList
     }),
     lineStyleList() {
       return lineStyleList[this.$i18n.locale] || lineStyleList.zh
@@ -1234,8 +996,6 @@ export default {
       if (val === 'baseStyle') {
         this.$refs.sidebar.show = true
         this.initStyle()
-        this.initConfig()
-        this.initWatermark()
         this.initRainbowLines()
         this.initOuterFramePadding()
         this.currentLayout = this.mindMap.getLayout()
@@ -1256,15 +1016,12 @@ export default {
     }
   },
   created() {
-    this.initLoacalConfig()
     this.$bus.$on('setData', this.onSetData)
   },
   beforeDestroy() {
     this.$bus.$off('setData', this.onSetData)
   },
   methods: {
-    ...mapMutations(['setLocalConfig']),
-
     onSetData() {
       if (this.activeSidebar !== 'baseStyle') return
       setTimeout(() => {
@@ -1272,84 +1029,15 @@ export default {
       }, 0)
     },
 
-    /**
-     * @Author: 王林
-     * @Date: 2021-05-05 14:02:12
-     * @Desc: 初始样式
-     */
+    // 初始样式
     initStyle() {
-      ;[
-        'backgroundColor',
-        'lineWidth',
-        'lineStyle',
-        'showLineMarker',
-        'rootLineKeepSameInCurve',
-        'rootLineStartPositionKeepSameInCurve',
-        'lineRadius',
-        'lineColor',
-        'generalizationLineWidth',
-        'generalizationLineColor',
-        'associativeLineColor',
-        'associativeLineWidth',
-        'associativeLineActiveWidth',
-        'associativeLineDasharray',
-        'associativeLineActiveColor',
-        'associativeLineTextFontSize',
-        'associativeLineTextColor',
-        'associativeLineTextFontFamily',
-        'paddingX',
-        'paddingY',
-        'imgMaxWidth',
-        'imgMaxHeight',
-        'iconSize',
-        'backgroundImage',
-        'backgroundRepeat',
-        'backgroundPosition',
-        'backgroundSize',
-        'nodeUseLineStyle'
-      ].forEach(key => {
+      Object.keys(this.style).forEach(key => {
         this.style[key] = this.mindMap.getThemeConfig(key)
         if (key === 'backgroundImage' && this.style[key] === 'none') {
           this.style[key] = ''
         }
       })
       this.initMarginStyle()
-    },
-
-    // 初始化其他配置
-    initConfig() {
-      ;[
-        'openPerformance',
-        'enableFreeDrag',
-        'mousewheelAction',
-        'mousewheelZoomActionReverse',
-        'createNewNodeBehavior',
-        'openRealtimeRenderOnNodeTextEdit'
-      ].forEach(key => {
-        this.config[key] = this.mindMap.getConfig(key)
-      })
-    },
-
-    // 初始化本地配置
-    initLoacalConfig() {
-      this.enableNodeRichText = this.localConfig.openNodeRichText
-      this.mousewheelAction = this.localConfig.mousewheelAction
-      this.mousewheelZoomActionReverse = this.localConfig.mousewheelZoomActionReverse
-      ;['isShowScrollbar', 'isUseHandDrawnLikeStyle'].forEach(key => {
-        this.localConfigs[key] = this.localConfig[key]
-      })
-    },
-
-    // 初始化水印配置
-    initWatermark() {
-      let config = this.mindMap.getConfig('watermarkConfig')
-      ;['text', 'lineSpacing', 'textSpacing', 'angle', 'onlyExport'].forEach(
-        key => {
-          this.watermarkConfig[key] = config[key]
-        }
-      )
-      this.watermarkConfig.show = !!config.text
-      this.watermarkConfig.textStyle = { ...config.textStyle }
     },
 
     // 初始化彩虹线条配置
@@ -1372,11 +1060,7 @@ export default {
       )
     },
 
-    /**
-     * @Author: 王林
-     * @Date: 2021-07-03 22:27:32
-     * @Desc: margin初始值
-     */
+    // margin初始值
     initMarginStyle() {
       ;['marginX', 'marginY'].forEach(key => {
         this.style[key] = this.mindMap.getThemeConfig()[this.marginActiveTab][
@@ -1385,11 +1069,7 @@ export default {
       })
     },
 
-    /**
-     * @Author: 王林
-     * @Date: 2021-05-05 14:05:40
-     * @Desc: 更新配置
-     */
+    // 更新配置
     update(key, value) {
       if (key === 'backgroundImage' && value === 'none') {
         this.style[key] = ''
@@ -1399,7 +1079,7 @@ export default {
       this.data.theme.config[key] = value
       this.$bus.$emit('showLoading')
       this.mindMap.setThemeConfig(this.data.theme.config)
-      storeConfig({
+      storeData({
         theme: {
           template: this.mindMap.getTheme(),
           config: this.data.theme.config
@@ -1407,41 +1087,10 @@ export default {
       })
     },
 
-    // 更新其他配置
-    updateOtherConfig(key, value) {
-      this.mindMap.updateConfig({
-        [key]: value
-      })
-      this.data.config = this.data.config || {}
-      this.data.config[key] = value
-      storeConfig({
-        config: this.data.config
-      })
-    },
-
-    // 更新水印配置
-    updateWatermarkConfig() {
-      clearTimeout(this.updateWatermarkTimer)
-      this.updateWatermarkTimer = setTimeout(() => {
-        let { show, ...config } = this.watermarkConfig
-        this.mindMap.watermark.updateWatermark({
-          ...config
-        })
-        this.data.config = this.data.config || {}
-        this.data.config.watermarkConfig = this.mindMap.getConfig(
-          'watermarkConfig'
-        )
-        storeConfig({
-          config: this.data.config
-        })
-      }, 300)
-    },
-
     // 更新彩虹线条配置
     updateRainbowLinesConfig(item) {
       this.rainbowLinesPopoverVisible = false
       this.curRainbowLineColorList = item.list || null
-      this.data.config = this.data.config || {}
       let newConfig = null
       if (item.list) {
         newConfig = {
@@ -1453,24 +1102,19 @@ export default {
           open: false
         }
       }
-      this.data.config.rainbowLinesConfig = newConfig
+      this.configData.rainbowLinesConfig = newConfig
       this.mindMap.rainbowLines.updateRainLinesConfig(newConfig)
-      storeConfig({
-        config: this.data.config
-      })
+      storeConfig(this.configData)
     },
 
     // 更新外框
     updateOuterFramePadding(prop, value) {
       this.outerFramePadding[prop] = value
-      this.data.config = this.data.config || {}
-      this.data.config[prop] = value
+      this.configData[prop] = value
       this.mindMap.updateConfig({
         [prop]: value
       })
-      storeConfig({
-        config: this.data.config
-      })
+      storeConfig(this.configData)
       this.mindMap.render()
     },
 
@@ -1482,7 +1126,7 @@ export default {
       }
       this.data.theme.config[this.marginActiveTab][type] = value
       this.mindMap.setThemeConfig(this.data.theme.config)
-      storeConfig({
+      storeData({
         theme: {
           template: this.mindMap.getTheme(),
           config: this.data.theme.config
@@ -1490,31 +1134,8 @@ export default {
       })
     },
 
-    // 切换显示水印与否
-    watermarkShowChange(value) {
-      if (value) {
-        let text =
-          this.watermarkConfig.text || this.$t('baseStyle.watermarkDefaultText')
-        this.watermarkConfig.text = text
-      } else {
-        this.watermarkConfig.text = ''
-      }
-      this.updateWatermarkConfig()
-    },
-
-    // 切换是否开启节点富文本编辑
-    enableNodeRichTextChange(e) {
-      this.mindMap.renderer.textEdit.hideEditTextBox()
-      this.setLocalConfig({
-        openNodeRichText: e
-      })
-    },
-
-    // 本地配置
-    updateLocalConfig(key, value) {
-      this.setLocalConfig({
-        [key]: value
-      })
+    useBg(bg) {
+      this.update('backgroundImage', bg)
     }
   }
 }
@@ -1581,6 +1202,10 @@ export default {
       align-items: center;
       margin-bottom: 5px;
 
+      &.spaceBetween {
+        justify-content: space-between;
+      }
+
       .name {
         font-size: 12px;
         margin-right: 10px;
@@ -1605,6 +1230,15 @@ export default {
         align-items: center;
         justify-content: center;
         cursor: pointer;
+      }
+
+      .iconBtn {
+        cursor: pointer;
+        transition: all 0.3s;
+
+        &.top {
+          transform: rotateZ(-180deg);
+        }
       }
     }
 
@@ -1631,6 +1265,38 @@ export default {
         right: 0;
         bottom: 0;
         height: 2px;
+      }
+    }
+
+    .bgList {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      height: 75px;
+
+      &.expand {
+        height: max-content;
+      }
+
+      .bgItem {
+        width: 120px;
+        height: 73px;
+        border: 1px solid #e9e9e9;
+        border-radius: 5px;
+        overflow: hidden;
+        padding: 5px;
+        margin-bottom: 8px;
+        cursor: pointer;
+
+        &.active {
+          border-color: #409eff;
+        }
+
+        img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
       }
     }
   }

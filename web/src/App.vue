@@ -6,8 +6,7 @@
 
 <script>
 export default {
-  name: 'App',
-  components: {}
+  name: 'App'
 }
 </script>
 
@@ -22,5 +21,24 @@ export default {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   color: #2c3e50;
+}
+
+.customScrollbar {
+  &::-webkit-scrollbar {
+    width: 7px;
+    height: 7px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    border-radius: 7px;
+    background-color: rgba(0, 0, 0, 0.3);
+    cursor: pointer;
+  }
+
+  &::-webkit-scrollbar-track {
+    box-shadow: none;
+    background: transparent;
+    display: none;
+  }
 }
 </style>

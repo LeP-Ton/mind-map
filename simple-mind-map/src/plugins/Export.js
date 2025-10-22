@@ -128,7 +128,13 @@ class Export {
   }
 
   //   svg转png
-  svgToPng(svgSrc, transparent, clipData = null) {
+  svgToPng(
+    svgSrc,
+    transparent,
+    clipData = null,
+    fitBg = false,
+    format = 'image/png'
+  ) {
     const { maxCanvasSize, minExportImgCanvasScale } = this.mindMap.opt
     return new Promise((resolve, reject) => {
       const img = new Image()
@@ -149,10 +155,37 @@ class Export {
             imgWidth = clipData.width + paddingX * 2
             imgHeight = clipData.height + paddingY * 2
           }
+          // 适配背景图片的大小
+          let fitBgImgWidth = 0
+          let fitBgImgHeight = 0
+          const { backgroundImage } = this.mindMap.themeConfig
+          if (fitBg && backgroundImage && !transparent) {
+            const bgImgSize = await new Promise(resolve => {
+              const bgImg = new Image()
+              bgImg.onload = () => {
+                resolve([bgImg.width, bgImg.height])
+              }
+              bgImg.onerror = () => {
+                resolve(null)
+              }
+              bgImg.src = backgroundImage
+            })
+            if (bgImgSize) {
+              const imgRatio = imgWidth / imgHeight
+              const bgRatio = bgImgSize[0] / bgImgSize[1]
+              if (imgRatio > bgRatio) {
+                fitBgImgWidth = imgWidth
+                fitBgImgHeight = imgWidth / bgRatio
+              } else {
+                fitBgImgHeight = imgHeight
+                fitBgImgWidth = imgHeight * bgRatio
+              }
+            }
+          }
           // 检查是否超出canvas支持的像素上限
           // canvas大小需要乘以dpr
-          let canvasWidth = imgWidth * dpr
-          let canvasHeight = imgHeight * dpr
+          let canvasWidth = (fitBgImgWidth || imgWidth) * dpr
+          let canvasHeight = (fitBgImgHeight || imgHeight) * dpr
           if (canvasWidth > maxCanvasSize || canvasHeight > maxCanvasSize) {
             let newWidth = null
             let newHeight = null
@@ -187,6 +220,10 @@ class Export {
           }
           // 图片绘制到canvas里
           // 如果有裁减数据，那么需要进行裁减
+          const fitBgLeft =
+            fitBgImgWidth > 0 ? (fitBgImgWidth - imgWidth) / 2 : 0
+          const fitBgTop =
+            fitBgImgHeight > 0 ? (fitBgImgHeight - imgHeight) / 2 : 0
           if (clipData) {
             ctx.drawImage(
               img,
@@ -194,15 +231,15 @@ class Export {
               clipData.top,
               clipData.width,
               clipData.height,
-              paddingX,
-              paddingY,
+              paddingX + fitBgLeft,
+              paddingY + fitBgTop,
               clipData.width,
               clipData.height
             )
           } else {
-            ctx.drawImage(img, 0, 0, styleWidth, styleHeight)
+            ctx.drawImage(img, fitBgLeft, fitBgTop, imgWidth, imgHeight)
           }
-          resolve(canvas.toDataURL())
+          resolve(canvas.toDataURL(format))
         } catch (error) {
           reject(error)
         }
@@ -280,16 +317,35 @@ class Export {
     })
   }
 
+  // 导出为指定格式的图片
+  async _image(format, name, transparent = false, node = null, fitBg = false) {
+    this.mindMap.renderer.textEdit.hideEditTextBox()
+    this.handleNodeExport(node)
+    const { str, clipData } = await this.getSvgData(node)
+    const svgUrl = await this.fixSvgStrAndToBlob(str)
+    const res = await this.svgToPng(
+      svgUrl,
+      transparent,
+      clipData,
+      fitBg,
+      format
+    )
+    return res
+  }
+
   //  导出为png
   /**
    * 方法1.把svg的图片都转化成data:url格式，再转换
    * 方法2.把svg的图片提取出来再挨个绘制到canvas里，最后一起转换
    */
-  async png(name, transparent = false, node = null) {
-    this.handleNodeExport(node)
-    const { str, clipData } = await this.getSvgData(node)
-    const svgUrl = await this.fixSvgStrAndToBlob(str)
-    const res = await this.svgToPng(svgUrl, transparent, clipData)
+  async png(...args) {
+    const res = await this._image('image/png', ...args)
+    return res
+  }
+
+  // 导出为jpg
+  async jpg(...args) {
+    const res = await this._image('image/jpg', ...args)
     return res
   }
 
@@ -305,11 +361,11 @@ class Export {
   }
 
   //  导出为pdf
-  async pdf(name, transparent = false) {
+  async pdf(name, transparent = false, fitBg = false) {
     if (!this.mindMap.doExportPDF) {
       throw new Error('请注册ExportPDF插件')
     }
-    const img = await this.png(name, transparent)
+    const img = await this.png(name, transparent, null, fitBg)
     // 使用jspdf库
     // await this.mindMap.doExportPDF.pdf(name, img)
     // 使用pdf-lib库
@@ -330,6 +386,7 @@ class Export {
 
   //  导出为svg
   async svg(name) {
+    this.mindMap.renderer.textEdit.hideEditTextBox()
     const { node } = await this.getSvgData()
     node.first().before(SVG(`<title>${name}</title>`))
     await this.drawBackgroundToSvg(node)

@@ -2,8 +2,6 @@
 export const CONSTANTS = {
   CHANGE_THEME: 'changeTheme',
   CHANGE_LAYOUT: 'changeLayout',
-  SET_DATA: 'setData',
-  TRANSFORM_TO_NORMAL_NODE: 'transformAllNodesToNormalNode',
   MODE: {
     READONLY: 'readonly',
     EDIT: 'edit'
@@ -17,7 +15,12 @@ export const CONSTANTS = {
     TIMELINE: 'timeline',
     TIMELINE2: 'timeline2',
     FISHBONE: 'fishbone',
-    VERTICAL_TIMELINE: 'verticalTimeline'
+    FISHBONE2: 'fishbone2',
+    RIGHT_FISHBONE: 'rightFishbone',
+    RIGHT_FISHBONE2: 'rightFishbone2',
+    VERTICAL_TIMELINE: 'verticalTimeline',
+    VERTICAL_TIMELINE2: 'verticalTimeline2',
+    VERTICAL_TIMELINE3: 'verticalTimeline3'
   },
   DIR: {
     UP: 'up',
@@ -72,7 +75,13 @@ export const CONSTANTS = {
     NOT_ACTIVE: 'notActive',
     ACTIVE_ONLY: 'activeOnly'
   },
-  TAG_POSITION: {
+  TAG_PLACEMENT: {
+    RIGHT: 'right',
+    BOTTOM: 'bottom'
+  },
+  IMG_PLACEMENT: {
+    LEFT: 'left',
+    TOP: 'top',
     RIGHT: 'right',
     BOTTOM: 'bottom'
   }
@@ -121,8 +130,28 @@ export const layoutList = [
     value: CONSTANTS.LAYOUT.VERTICAL_TIMELINE
   },
   {
+    name: '竖向时间轴2',
+    value: CONSTANTS.LAYOUT.VERTICAL_TIMELINE2
+  },
+  {
+    name: '竖向时间轴3',
+    value: CONSTANTS.LAYOUT.VERTICAL_TIMELINE3
+  },
+  {
     name: '鱼骨图',
     value: CONSTANTS.LAYOUT.FISHBONE
+  },
+  {
+    name: '鱼骨图2',
+    value: CONSTANTS.LAYOUT.FISHBONE2
+  },
+  {
+    name: '向右鱼骨图',
+    value: CONSTANTS.LAYOUT.RIGHT_FISHBONE
+  },
+  {
+    name: '向右鱼骨图2',
+    value: CONSTANTS.LAYOUT.RIGHT_FISHBONE2
   }
 ]
 export const layoutValueList = [
@@ -134,7 +163,12 @@ export const layoutValueList = [
   CONSTANTS.LAYOUT.TIMELINE,
   CONSTANTS.LAYOUT.TIMELINE2,
   CONSTANTS.LAYOUT.VERTICAL_TIMELINE,
-  CONSTANTS.LAYOUT.FISHBONE
+  CONSTANTS.LAYOUT.VERTICAL_TIMELINE2,
+  CONSTANTS.LAYOUT.VERTICAL_TIMELINE3,
+  CONSTANTS.LAYOUT.FISHBONE,
+  CONSTANTS.LAYOUT.FISHBONE2,
+  CONSTANTS.LAYOUT.RIGHT_FISHBONE,
+  CONSTANTS.LAYOUT.RIGHT_FISHBONE2
 ]
 
 // 节点数据中非样式的字段
@@ -152,7 +186,7 @@ export const nodeDataNoStylePropList = [
   'isActive',
   'generalization',
   'richText',
-  'resetRichText',
+  'resetRichText', // 重新创建富文本内容，去掉原有样式
   'uid',
   'activeStyle',
   'associativeLineTargets',
@@ -167,7 +201,12 @@ export const nodeDataNoStylePropList = [
   'range',
   'customLeft',
   'customTop',
-  'customTextWidth'
+  'customTextWidth',
+  'checkbox',
+  'dir',
+  'needUpdate', // 重新创建节点内容
+  'imgMap',
+  'nodeLink'
 ]
 
 // 错误类型
@@ -200,6 +239,10 @@ export const cssContent = `
     opacity: 1;
     stroke-width: 2;
   }
+
+  .smm-text-node-wrap, .smm-expand-btn-text {
+    user-select: none;
+  }
 `
 
 // html自闭合标签列表
@@ -215,3 +258,14 @@ export const selfCloseTagList = [
 
 // 非富文本模式下的节点文本行高
 export const noneRichTextNodeLineHeight = 1.2
+
+// 富文本支持的样式列表
+export const richTextSupportStyleList = [
+  'fontFamily',
+  'fontSize',
+  'fontWeight',
+  'fontStyle',
+  'textDecoration',
+  'color',
+  'textAlign'
+]

@@ -16,6 +16,8 @@ import {
   noneRichTextNodeLineHeight
 } from '../../constants/constant'
 
+const SMM_NODE_EDIT_WRAP = 'smm-node-edit-wrap'
+
 //  节点文字编辑类
 export default class TextEdit {
   //  构造函数
@@ -33,6 +35,8 @@ export default class TextEdit {
     this.hasBodyMousedown = false
     this.textNodePaddingX = 5
     this.textNodePaddingY = 3
+    this.isNeedUpdateTextEditNode = false
+    this.mindMap.addEditNodeClass(SMM_NODE_EDIT_WRAP)
     this.bindEvent()
   }
 
@@ -91,7 +95,7 @@ export default class TextEdit {
       })
     })
     this.mindMap.on('scale', this.onScale)
-    // // 监听按键事件，判断是否自动进入文本编辑模式
+    // 监听按键事件，判断是否自动进入文本编辑模式
     if (this.mindMap.opt.enableAutoEnterTextEditWhenKeydown) {
       window.addEventListener('keydown', this.onKeydown)
     }
@@ -113,6 +117,28 @@ export default class TextEdit {
           )
         }
       }
+      if (
+        opt.enableAutoEnterTextEditWhenKeydown !==
+        lastOpt.enableAutoEnterTextEditWhenKeydown
+      ) {
+        window[
+          opt.enableAutoEnterTextEditWhenKeydown
+            ? 'addEventListener'
+            : 'removeEventListener'
+        ]('keydown', this.onKeydown)
+      }
+    })
+    // 正在编辑文本时，给节点添加了图标等其他内容时需要更新编辑框的位置
+    this.mindMap.on('afterExecCommand', () => {
+      if (!this.isShowTextEdit()) return
+      this.isNeedUpdateTextEditNode = true
+    })
+    this.mindMap.on('node_tree_render_end', () => {
+      if (!this.isShowTextEdit()) return
+      if (this.isNeedUpdateTextEditNode) {
+        this.isNeedUpdateTextEditNode = false
+        this.updateTextEditNode()
+      }
     })
   }
 
@@ -123,11 +149,15 @@ export default class TextEdit {
 
   // 按键事件
   onKeydown(e) {
+    if (e.target !== document.body) return
     const activeNodeList = this.mindMap.renderer.activeNodeList
     if (activeNodeList.length <= 0 || activeNodeList.length > 1) return
     const node = activeNodeList[0]
     // 当正在输入中文或英文或数字时，如果没有按下组合键，那么自动进入文本编辑模式
     if (node && this.checkIsAutoEnterTextEditKey(e)) {
+      // 忽略第一个键值，避免中文输入法时进入编辑会导致第一个键值变成字母的问题
+      // 带来的问题是按的第一下纯粹是进入文本编辑，但没有变成输入
+      e.preventDefault()
       this.show({
         node,
         e,
@@ -150,7 +180,6 @@ export default class TextEdit {
 
   //  注册临时快捷键
   registerTmpShortcut() {
-    // 注册回车快捷键
     this.mindMap.keyCommand.addShortcut('Enter', () => {
       this.hideEditTextBox()
     })
@@ -167,7 +196,17 @@ export default class TextEdit {
     return this.showTextEdit
   }
 
-  //  显示文本编辑框
+  // 设置文本编辑框是否处于显示状态
+  setIsShowTextEdit(val) {
+    this.showTextEdit = val
+    if (val) {
+      this.mindMap.keyCommand.stopCheckInSvg()
+    } else {
+      this.mindMap.keyCommand.recoveryCheckInSvg()
+    }
+  }
+
+  // 显示文本编辑框
   // isInserting：是否是刚创建的节点
   // isFromKeyDown：是否是在按键事件进入的编辑
   async show({
@@ -179,6 +218,11 @@ export default class TextEdit {
     // 使用了自定义节点内容那么不响应编辑事件
     if (node.isUseCustomNodeContent()) {
       return
+    }
+    // 如果有正在编辑中的节点，那么先结束它
+    const currentEditNode = this.getCurrentEditNode()
+    if (currentEditNode) {
+      this.hideEditTextBox()
     }
     const { beforeTextEdit, openRealtimeRenderOnNodeTextEdit } =
       this.mindMap.opt
@@ -192,10 +236,13 @@ export default class TextEdit {
       }
       if (!isShow) return
     }
-    this.currentNode = node
     const { offsetLeft, offsetTop } = checkNodeOuter(this.mindMap, node)
     this.mindMap.view.translateXY(offsetLeft, offsetTop)
     const g = node._textData.node
+    // 需要先显示，不然宽高获取到的可能是0
+    if (openRealtimeRenderOnNodeTextEdit) {
+      g.show()
+    }
     const rect = g.node.getBoundingClientRect()
     // 如果开启了大小实时更新，那么直接隐藏节点原文本
     if (openRealtimeRenderOnNodeTextEdit) {
@@ -212,6 +259,7 @@ export default class TextEdit {
       this.mindMap.richText.showEditText(params)
       return
     }
+    this.currentNode = node
     this.showEditTextBox(params)
   }
 
@@ -240,7 +288,7 @@ export default class TextEdit {
       this.mindMap.richText.showTextEdit = false
     } else {
       this.cacheEditingText = this.getEditText()
-      this.showTextEdit = false
+      this.setIsShowTextEdit(false)
     }
     this.show({
       node,
@@ -255,7 +303,8 @@ export default class TextEdit {
       nodeTextEditZIndex,
       textAutoWrapWidth,
       selectTextOnEnterEditText,
-      openRealtimeRenderOnNodeTextEdit
+      openRealtimeRenderOnNodeTextEdit,
+      autoEmptyTextWhenKeydownEnterEdit
     } = this.mindMap.opt
     if (!isFromScale) {
       this.mindMap.emit('before_show_text_edit')
@@ -263,7 +312,7 @@ export default class TextEdit {
     this.registerTmpShortcut()
     if (!this.textEditNode) {
       this.textEditNode = document.createElement('div')
-      this.textEditNode.classList.add('smm-node-edit-wrap')
+      this.textEditNode.classList.add(SMM_NODE_EDIT_WRAP)
       this.textEditNode.style.cssText = `
         position: fixed;
         box-sizing: border-box;
@@ -303,13 +352,10 @@ export default class TextEdit {
         } else {
           handleInputPasteText(e)
         }
+        this.emitTextChangeEvent()
       })
       this.textEditNode.addEventListener('input', () => {
-        this.mindMap.emit('node_text_edit_change', {
-          node: this.currentNode,
-          text: this.getEditText(),
-          richText: false
-        })
+        this.emitTextChangeEvent()
       })
       const targetNode =
         this.mindMap.opt.customInnerElsAppendTo || document.body
@@ -328,12 +374,16 @@ export default class TextEdit {
       this.textEditNode.style.background = this.getBackground(node)
     }
     this.textEditNode.style.zIndex = nodeTextEditZIndex
-    this.textEditNode.innerHTML = textLines.join('<br>')
+    if (isFromKeyDown && autoEmptyTextWhenKeydownEnterEdit) {
+      this.textEditNode.innerHTML = ''
+    } else {
+      this.textEditNode.innerHTML = textLines.join('<br>')
+    }
     this.textEditNode.style.minWidth =
       rect.width + this.textNodePaddingX * 2 + 'px'
     this.textEditNode.style.minHeight = rect.height + 'px'
-    this.textEditNode.style.left = rect.left + 'px'
-    this.textEditNode.style.top = rect.top + 'px'
+    this.textEditNode.style.left = Math.floor(rect.left) + 'px'
+    this.textEditNode.style.top = Math.floor(rect.top) + 'px'
     this.textEditNode.style.display = 'block'
     this.textEditNode.style.maxWidth = textAutoWrapWidth * scale + 'px'
     if (isMultiLine) {
@@ -344,7 +394,7 @@ export default class TextEdit {
     } else {
       this.textEditNode.style.lineHeight = 'normal'
     }
-    this.showTextEdit = true
+    this.setIsShowTextEdit(true)
     // 选中文本
     // if (!this.cacheEditingText) {
     //   selectAllInput(this.textEditNode)
@@ -357,9 +407,17 @@ export default class TextEdit {
     this.cacheEditingText = ''
   }
 
+  // 派发节点文本编辑事件
+  emitTextChangeEvent() {
+    this.mindMap.emit('node_text_edit_change', {
+      node: this.currentNode,
+      text: this.getEditText(),
+      richText: false
+    })
+  }
+
   // 更新文本编辑框的大小和位置
-  // notChangeProps：不会发生改变的属性列表
-  updateTextEditNode(notChangeProps = []) {
+  updateTextEditNode() {
     if (this.mindMap.richText) {
       this.mindMap.richText.updateTextEditNode()
       return
@@ -372,9 +430,8 @@ export default class TextEdit {
       rect.width + this.textNodePaddingX * 2 + 'px'
     this.textEditNode.style.minHeight =
       rect.height + this.textNodePaddingY * 2 + 'px'
-    if (!notChangeProps.includes('left'))
-      this.textEditNode.style.left = rect.left + 'px'
-    this.textEditNode.style.top = rect.top + 'px'
+    this.textEditNode.style.left = Math.floor(rect.left) + 'px'
+    this.textEditNode.style.top = Math.floor(rect.top) + 'px'
   }
 
   // 获取编辑区域的背景填充
@@ -431,7 +488,7 @@ export default class TextEdit {
     this.textEditNode.style.fontSize = 'inherit'
     this.textEditNode.style.fontWeight = 'normal'
     this.textEditNode.style.transform = 'translateY(0)'
-    this.showTextEdit = false
+    this.setIsShowTextEdit(false)
     this.mindMap.execCommand('SET_NODE_TEXT', currentNode, text)
     // if (currentNode.isGeneralization) {
     //   // 概要节点

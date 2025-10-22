@@ -30,10 +30,12 @@ import {
   createSmmFormatData,
   checkSmmFormatData,
   checkIsNodeStyleDataKey,
-  removeRichTextStyes,
   formatGetNodeGeneralization,
   sortNodeList,
-  throttle
+  throttle,
+  debounce,
+  checkClipboardReadEnable,
+  isNodeNotNeedRenderData
 } from '../../utils'
 import { shapeList } from './node/Shape'
 import { lineStyleProps } from '../../theme/default'
@@ -58,8 +60,14 @@ const layouts = {
   [CONSTANTS.LAYOUT.TIMELINE2]: Timeline,
   // 竖向时间轴
   [CONSTANTS.LAYOUT.VERTICAL_TIMELINE]: VerticalTimeline,
+  // 竖向时间轴2
+  [CONSTANTS.LAYOUT.VERTICAL_TIMELINE2]: VerticalTimeline,
+  // 竖向时间轴3
+  [CONSTANTS.LAYOUT.VERTICAL_TIMELINE3]: VerticalTimeline,
   // 鱼骨图
-  [CONSTANTS.LAYOUT.FISHBONE]: Fishbone
+  [CONSTANTS.LAYOUT.FISHBONE]: Fishbone,
+  // 鱼骨图2
+  [CONSTANTS.LAYOUT.FISHBONE2]: Fishbone
 }
 
 //  渲染
@@ -79,25 +87,24 @@ class Render {
     this.isRendering = false
     // 是否存在等待渲染
     this.hasWaitRendering = false
-    this.waitRenderingParams = []
     // 用于缓存节点
     this.nodeCache = {}
     this.lastNodeCache = {}
-    // 触发render的来源
-    this.renderSource = ''
+    // 收集触发render的来源
+    this.renderSourceList = []
+    // 收集render的回调函数
+    this.renderCallbackList = []
     // 当前激活的节点列表
     this.activeNodeList = []
+    // 防抖定时器
+    this.emitNodeActiveEventTimer = null
+    this.renderTimer = null
     // 根节点
     this.root = null
     // 文本编辑框，需要再bindEvent之前实例化，否则单击事件只能触发隐藏文本编辑框，而无法保存文本修改
     this.textEdit = new TextEdit(this)
     // 当前复制的数据
-    this.lastBeingCopyData = null
     this.beingCopyData = null
-    this.beingPasteText = ''
-    this.beingPasteImgSize = 0
-    this.currentBeingPasteType = ''
-    this.pasteData = { text: null, img: null }
     // 节点高亮框
     this.highlightBoxNode = null
     this.highlightBoxNodeStyle = null
@@ -115,20 +122,21 @@ class Render {
 
   //  设置布局结构
   setLayout() {
-    this.layout = new (
-      layouts[this.mindMap.opt.layout]
-        ? layouts[this.mindMap.opt.layout]
-        : layouts[CONSTANTS.LAYOUT.LOGICAL_STRUCTURE]
-    )(this, this.mindMap.opt.layout)
+    if (this.layout && this.layout.beforeChange) {
+      this.layout.beforeChange()
+    }
+    const { layout } = this.mindMap.opt
+    let L = layouts[layout] || this.mindMap[layout]
+    if (!L) {
+      L = layouts[CONSTANTS.LAYOUT.LOGICAL_STRUCTURE]
+      this.mindMap.opt.layout = CONSTANTS.LAYOUT.LOGICAL_STRUCTURE
+    }
+    this.layout = new L(this, layout)
   }
 
   // 重新设置思维导图数据
   setData(data) {
-    if (this.hasRichTextPlugin()) {
-      this.renderTree = data ? this.mindMap.richText.handleSetData(data) : null
-    } else {
-      this.renderTree = data
-    }
+    this.renderTree = data || null
   }
 
   //   绑定事件
@@ -153,6 +161,9 @@ class Render {
     })
     // 性能模式
     const onViewDataChange = throttle(() => {
+      if (!this.renderTree) {
+        return
+      }
       if (this.root) {
         this.mindMap.emit('node_tree_render_start')
         this.root.render(
@@ -168,7 +179,7 @@ class Render {
       this.mindMap.on('view_data_change', onViewDataChange)
     }
     // 文本编辑时实时更新节点大小
-    this.onNodeTextEditChange = this.onNodeTextEditChange.bind(this)
+    this.onNodeTextEditChange = debounce(this.onNodeTextEditChange, 100, this)
     if (openRealtimeRenderOnNodeTextEdit) {
       this.mindMap.on('node_text_edit_change', this.onNodeTextEditChange)
     }
@@ -195,7 +206,7 @@ class Render {
     })
     // 处理非https下的复制黏贴问题
     // 暂时不启用，因为给页面的其他输入框（比如节点文本编辑框）粘贴内容也会触发，冲突问题暂时没有想到好的解决方法，不可能要求所有输入框都阻止冒泡
-    // if (!navigator.clipboard) {
+    // if (!checkClipboardReadEnable()) {
     //   this.handlePaste = this.handlePaste.bind(this)
     //   window.addEventListener('paste', this.handlePaste)
     //   this.mindMap.on('beforeDestroy', () => {
@@ -212,8 +223,7 @@ class Render {
     node.height = height
     node.layout()
     this.mindMap.render(() => {
-      // 输入框的left不会改变，所以无需更新
-      this.textEdit.updateTextEditNode(['left'])
+      this.textEdit.updateTextEditNode()
     })
   }
 
@@ -434,7 +444,7 @@ class Render {
     })
     // 粘贴节点
     this.mindMap.keyCommand.addShortcut('Control+v', () => {
-      if (navigator.clipboard) this.paste()
+      this.paste()
     })
     // 根节点居中显示
     this.mindMap.keyCommand.addShortcut('Control+Enter', () => {
@@ -450,9 +460,10 @@ class Render {
     )
     if (!isChange) return
     this.lastActiveNodeList = [...activeNodeList]
-    this.mindMap.batchExecution.push('emitNodeActiveEvent', () => {
+    clearTimeout(this.emitNodeActiveEventTimer)
+    this.emitNodeActiveEventTimer = setTimeout(() => {
       this.mindMap.emit('node_active', node, activeNodeList)
-    })
+    }, 0)
   }
 
   // 鼠标点击画布时清空当前激活节点列表
@@ -495,22 +506,71 @@ class Render {
     this.lastNodeCache = {}
   }
 
-  //   渲染
-  render(callback = () => {}, source) {
+  // 保存触发渲染的参数
+  addRenderParams(callback, source) {
+    if (callback) {
+      const index = this.renderCallbackList.findIndex(fn => {
+        return fn === callback
+      })
+      if (index === -1) {
+        this.renderCallbackList.push(callback)
+      }
+    }
+    if (source) {
+      const index = this.renderSourceList.findIndex(s => {
+        return s === source
+      })
+      if (index === -1) {
+        this.renderSourceList.push(source)
+      }
+    }
+  }
+
+  // 判断是否包含某种触发渲染源
+  checkHasRenderSource(val) {
+    val = Array.isArray(val) ? val : [val]
+    for (let i = 0; i < this.renderSourceList.length; i++) {
+      if (val.includes(this.renderSourceList[i])) {
+        return true
+      }
+    }
+    return false
+  }
+
+  // 渲染完毕的操作
+  onRenderEnd() {
+    this.renderCallbackList.forEach(fn => {
+      fn()
+    })
+    this.isRendering = false
+    this.reRender = false
+    this.renderCallbackList = []
+    this.renderSourceList = []
+    this.mindMap.emit('node_tree_render_end')
+  }
+
+  // 渲染
+  render(callback, source) {
+    this.addRenderParams(callback, source)
+    clearTimeout(this.renderTimer)
+    this.renderTimer = setTimeout(() => {
+      this._render()
+    }, 0)
+  }
+
+  // 真正的渲染
+  _render() {
     // 切换主题时，被收起的节点需要添加样式复位的标注
-    if (source === CONSTANTS.CHANGE_THEME) {
+    if (this.checkHasRenderSource(CONSTANTS.CHANGE_THEME)) {
       this.resetUnExpandNodeStyle()
     }
     // 如果当前还没有渲染完毕，不再触发渲染
     if (this.isRendering) {
       // 等待当前渲染完毕后再进行一次渲染
       this.hasWaitRendering = true
-      this.waitRenderingParams = [callback, source]
       return
     }
     this.isRendering = true
-    // 触发当前重新渲染的来源
-    this.renderSource = source
     // 节点缓存
     this.lastNodeCache = this.nodeCache
     this.nodeCache = {}
@@ -520,8 +580,7 @@ class Render {
     }
     // 如果没有节点数据
     if (!this.renderTree) {
-      this.isRendering = false
-      this.mindMap.emit('node_tree_render_end')
+      this.onRenderEnd()
       return
     }
     this.mindMap.emit('node_tree_render_start')
@@ -543,38 +602,25 @@ class Render {
       // 渲染节点
       this.root.render(() => {
         this.isRendering = false
-        callback && callback()
         if (this.hasWaitRendering) {
-          const params = this.waitRenderingParams
           this.hasWaitRendering = false
-          this.waitRenderingParams = []
-          this.render(...params)
-        } else {
-          this.renderSource = ''
-          if (this.reRender) {
-            this.reRender = false
-          }
-          // 触发一次保存，因为修改了渲染树的数据
-          if (
-            this.hasRichTextPlugin() &&
-            [CONSTANTS.CHANGE_THEME, CONSTANTS.SET_DATA].includes(source)
-          ) {
-            this.mindMap.command.addHistory()
-          }
+          this.render()
+          return
         }
-        this.mindMap.emit('node_tree_render_end')
+        this.onRenderEnd()
       })
     })
     this.emitNodeActiveEvent()
   }
 
-  // 给当前被收起来的节点数据添加文本复位标志
+  // 给当前被收起来的节点数据添加更新标志
   resetUnExpandNodeStyle() {
-    if (!this.renderTree || !this.hasRichTextPlugin()) return
+    if (!this.renderTree) return
     walk(this.renderTree, null, node => {
       if (!node.data.expand) {
         walk(node, null, node2 => {
-          node2.data.resetRichText = true
+          // 主要是触发数据新旧对比，不一样则会重新创建节点
+          node2.data['needUpdate'] = true
         })
         return true
       }
@@ -757,15 +803,16 @@ class Render {
       richText: isRichText,
       isActive: focusNewNode // 如果同时对多个节点插入子节点，那么需要把新增的节点设为激活状态。如果不进入编辑状态，那么也需要手动设为激活状态
     }
-    if (isRichText) params.resetRichText = isRichText
+    if (isRichText) params.resetRichText = true
     // 动态指定的子节点数据也需要添加相关属性
-    appointChildren = addDataToAppointNodes(appointChildren, {
-      ...params
-    })
+    appointChildren = addDataToAppointNodes(appointChildren, params)
+    const alreadyIsRichText = appointData && appointData.richText
+    let createNewId = false
     list.forEach(node => {
       if (node.isGeneralization || node.isRoot) {
         return
       }
+      appointChildren = simpleDeepClone(appointChildren)
       const parent = node.parent
       const isOneLayer = node.layerIndex === 1
       // 新插入节点的默认文本
@@ -774,6 +821,10 @@ class Render {
         : defaultInsertBelowSecondLevelNodeText
       // 计算插入位置
       const index = getNodeDataIndex(node)
+      // 如果指定的数据就是富文本格式，那么不需要重新创建
+      if (alreadyIsRichText && params.resetRichText) {
+        delete params.resetRichText
+      }
       const newNodeData = {
         inserting,
         data: {
@@ -782,8 +833,9 @@ class Render {
           uid: createUid(),
           ...(appointData || {})
         },
-        children: [...createUidForAppointNodes(appointChildren)]
+        children: [...createUidForAppointNodes(appointChildren, createNewId)]
       }
+      createNewId = true
       parent.nodeData.children.splice(index + 1, 0, newNodeData)
     })
     // 如果同时对多个节点插入子节点，需要清除原来激活的节点
@@ -809,16 +861,19 @@ class Render {
       richText: isRichText,
       isActive: focusNewNode
     }
-    if (isRichText) params.resetRichText = isRichText
+    if (isRichText) params.resetRichText = true
     nodeList = addDataToAppointNodes(nodeList, params)
+    let createNewId = false
     list.forEach(node => {
       if (node.isGeneralization || node.isRoot) {
         return
       }
+      nodeList = simpleDeepClone(nodeList)
       const parent = node.parent
       // 计算插入位置
       const index = getNodeDataIndex(node)
-      const newNodeList = createUidForAppointNodes(simpleDeepClone(nodeList))
+      const newNodeList = createUidForAppointNodes(nodeList, createNewId)
+      createNewId = true
       parent.nodeData.children.splice(index + 1, 0, ...newNodeList)
     })
     if (focusNewNode) {
@@ -855,21 +910,26 @@ class Render {
       richText: isRichText,
       isActive: focusNewNode
     }
-    if (isRichText) params.resetRichText = isRichText
+    if (isRichText) params.resetRichText = true
     // 动态指定的子节点数据也需要添加相关属性
-    appointChildren = addDataToAppointNodes(appointChildren, {
-      ...params
-    })
+    appointChildren = addDataToAppointNodes(appointChildren, params)
+    const alreadyIsRichText = appointData && appointData.richText
+    let createNewId = false
     list.forEach(node => {
       if (node.isGeneralization) {
         return
       }
+      appointChildren = simpleDeepClone(appointChildren)
       if (!node.nodeData.children) {
         node.nodeData.children = []
       }
       const text = node.isRoot
         ? defaultInsertSecondLevelNodeText
         : defaultInsertBelowSecondLevelNodeText
+      // 如果指定的数据就是富文本格式，那么不需要重新创建
+      if (alreadyIsRichText && params.resetRichText) {
+        delete params.resetRichText
+      }
       const newNode = {
         inserting,
         data: {
@@ -878,8 +938,9 @@ class Render {
           ...params,
           ...(appointData || {})
         },
-        children: [...createUidForAppointNodes(appointChildren)]
+        children: [...createUidForAppointNodes(appointChildren, createNewId)]
       }
+      createNewId = true
       node.nodeData.children.push(newNode)
       // 插入子节点时自动展开子节点
       node.setData({
@@ -909,16 +970,20 @@ class Render {
       richText: isRichText,
       isActive: focusNewNode
     }
-    if (isRichText) params.resetRichText = isRichText
+    if (isRichText) params.resetRichText = true
     childList = addDataToAppointNodes(childList, params)
+    let createNewId = false
     list.forEach(node => {
       if (node.isGeneralization) {
         return
       }
+      childList = simpleDeepClone(childList)
       if (!node.nodeData.children) {
         node.nodeData.children = []
       }
-      childList = createUidForAppointNodes(childList)
+      childList = createUidForAppointNodes(childList, createNewId)
+      // 第一个引用不需要重新创建uid，后面的需要重新创建，否则id会重复
+      createNewId = true
       node.nodeData.children.push(...childList)
       // 插入子节点时自动展开子节点
       node.setData({
@@ -954,7 +1019,8 @@ class Render {
       richText: isRichText,
       isActive: focusNewNode
     }
-    if (isRichText) params.resetRichText = isRichText
+    if (isRichText) params.resetRichText = true
+    const alreadyIsRichText = appointData && appointData.richText
     list.forEach(node => {
       if (node.isGeneralization || node.isRoot) {
         return
@@ -963,6 +1029,10 @@ class Render {
         node.layerIndex === 1
           ? defaultInsertSecondLevelNodeText
           : defaultInsertBelowSecondLevelNodeText
+      // 如果指定的数据就是富文本格式，那么不需要重新创建
+      if (alreadyIsRichText && params.resetRichText) {
+        delete params.resetRichText
+      }
       const newNode = {
         inserting,
         data: {
@@ -972,11 +1042,6 @@ class Render {
           ...(appointData || {})
         },
         children: [node.nodeData]
-      }
-      if (isRichText) {
-        node.setData({
-          resetRichText: true
-        })
       }
       const parent = node.parent
       // 获取当前节点所在位置
@@ -991,11 +1056,12 @@ class Render {
   }
 
   //  上移节点，多个节点只会操作第一个节点
-  upNode() {
-    if (this.activeNodeList.length <= 0) {
+  upNode(appointNode) {
+    if (this.activeNodeList.length <= 0 && !appointNode) {
       return
     }
-    let node = this.activeNodeList[0]
+    const list = appointNode ? [appointNode] : this.activeNodeList
+    const node = list[0]
     if (node.isRoot) {
       return
     }
@@ -1016,11 +1082,12 @@ class Render {
   }
 
   //  下移节点，多个节点只会操作第一个节点
-  downNode() {
-    if (this.activeNodeList.length <= 0) {
+  downNode(appointNode) {
+    if (this.activeNodeList.length <= 0 && !appointNode) {
       return
     }
-    let node = this.activeNodeList[0]
+    const list = appointNode ? [appointNode] : this.activeNodeList
+    const node = list[0]
     if (node.isRoot) {
       return
     }
@@ -1051,7 +1118,6 @@ class Render {
     const index = getNodeIndexInNodeList(node, parent.children)
     const parentIndex = getNodeIndexInNodeList(parent, grandpa.children)
     // 节点数据
-    this.checkNodeLayerChange(node, parent)
     parent.nodeData.children.splice(index, 1)
     grandpa.nodeData.children.splice(parentIndex + 1, 0, node.nodeData)
     this.mindMap.render()
@@ -1066,10 +1132,10 @@ class Render {
         delete nodeData[key]
       }
     })
-    // 如果是富文本，那么还要处理富文本内容
-    if (hasCustomStyles && this.hasRichTextPlugin()) {
+    // 如果是富文本，那么直接全部重新创建，因为有些样式是通过标签来渲染的
+    if (this.hasRichTextPlugin()) {
+      hasCustomStyles = true
       nodeData.resetRichText = true
-      nodeData.text = removeRichTextStyes(nodeData.text)
     }
     return hasCustomStyles
   }
@@ -1154,8 +1220,6 @@ class Render {
         text = clipboardData.getData('text')
       }
     })
-    this.pasteData.img = img
-    this.pasteData.text = text
     this.paste()
   }
 
@@ -1168,134 +1232,124 @@ class Render {
       disabledClipboard,
       onlyPasteTextWhenHasImgAndText
     } = this.mindMap.opt
-    // 读取剪贴板的文字和图片
-    let text = ''
-    let img = null
-    if (!disabledClipboard) {
+    // 如果支持剪贴板操作，那么以剪贴板数据为准
+    if (!disabledClipboard && checkClipboardReadEnable()) {
       try {
-        const res = navigator.clipboard
-          ? await getDataFromClipboard()
-          : this.pasteData
-        text = res.text || ''
-        img = res.img || null
+        const res = await getDataFromClipboard()
+        let text = res.text || ''
+        let img = res.img || null
+        // 存在文本，则创建子节点
+        if (text) {
+          // 判断粘贴的是否是simple-mind-map的数据
+          let smmData = null
+          let useDefault = true
+          // 用户自定义处理
+          if (this.mindMap.opt.customHandleClipboardText) {
+            try {
+              const res = await this.mindMap.opt.customHandleClipboardText(text)
+              if (!isUndef(res)) {
+                useDefault = false
+                const checkRes = checkSmmFormatData(res)
+                if (checkRes.isSmm) {
+                  smmData = checkRes.data
+                } else {
+                  text = checkRes.data
+                }
+              }
+            } catch (error) {
+              errorHandler(
+                ERROR_TYPES.CUSTOM_HANDLE_CLIPBOARD_TEXT_ERROR,
+                error
+              )
+            }
+          }
+          // 默认处理
+          if (useDefault) {
+            const checkRes = checkSmmFormatData(text)
+            if (checkRes.isSmm) {
+              smmData = checkRes.data
+            } else {
+              text = checkRes.data
+            }
+          }
+          if (smmData) {
+            this.mindMap.execCommand(
+              'INSERT_MULTI_CHILD_NODE',
+              [],
+              Array.isArray(smmData) ? smmData : [smmData]
+            )
+          } else {
+            // 如果是富文本模式，那么需要转义特殊字符
+            if (this.hasRichTextPlugin()) {
+              text = htmlEscape(text)
+            }
+            const textArr = text
+              .split(new RegExp('\r?\n|(?<!\n)\r', 'g'))
+              .filter(item => {
+                return !!item
+              })
+            // 判断是否需要根据换行自动分割节点
+            if (textArr.length > 1 && handleIsSplitByWrapOnPasteCreateNewNode) {
+              handleIsSplitByWrapOnPasteCreateNewNode()
+                .then(() => {
+                  this.mindMap.execCommand(
+                    'INSERT_MULTI_CHILD_NODE',
+                    [],
+                    textArr.map(item => {
+                      return {
+                        data: {
+                          text: item
+                        },
+                        children: []
+                      }
+                    })
+                  )
+                })
+                .catch(() => {
+                  this.mindMap.execCommand('INSERT_CHILD_NODE', false, [], {
+                    text
+                  })
+                })
+            } else {
+              this.mindMap.execCommand('INSERT_CHILD_NODE', false, [], {
+                text
+              })
+            }
+          }
+        }
+        // 存在图片，则添加到当前激活节点
+        if (img && (!text || !onlyPasteTextWhenHasImgAndText)) {
+          try {
+            let imgData = null
+            // 自定义图片处理函数
+            if (
+              handleNodePasteImg &&
+              typeof handleNodePasteImg === 'function'
+            ) {
+              imgData = await handleNodePasteImg(img)
+            } else {
+              imgData = await loadImage(img)
+            }
+            if (this.activeNodeList.length > 0) {
+              this.activeNodeList.forEach(node => {
+                this.mindMap.execCommand('SET_NODE_IMAGE', node, {
+                  url: imgData.url,
+                  title: '',
+                  width: imgData.size.width,
+                  height: imgData.size.height
+                })
+              })
+            }
+          } catch (error) {
+            errorHandler(ERROR_TYPES.LOAD_CLIPBOARD_IMAGE_ERROR, error)
+          }
+        }
       } catch (error) {
         errorHandler(ERROR_TYPES.READ_CLIPBOARD_ERROR, error)
       }
-    }
-    // 检查剪切板数据是否有变化
-    // 通过图片大小来判断图片是否发生变化，可能是不准确的，但是目前没有其他好方法
-    const imgSize = img ? img.size : 0
-    if (this.beingPasteText !== text || this.beingPasteImgSize !== imgSize) {
-      this.currentBeingPasteType = CONSTANTS.PASTE_TYPE.CLIP_BOARD
-      this.beingPasteText = text
-      this.beingPasteImgSize = imgSize
-    }
-    // 检查要粘贴的节点数据是否有变化，节点优先级高于剪切板
-    if (this.lastBeingCopyData !== this.beingCopyData) {
-      this.lastBeingCopyData = this.beingCopyData
-      this.currentBeingPasteType = CONSTANTS.PASTE_TYPE.CANVAS
-    }
-    // 粘贴剪切板的数据
-    if (this.currentBeingPasteType === CONSTANTS.PASTE_TYPE.CLIP_BOARD) {
-      // 存在文本，则创建子节点
-      if (text) {
-        // 判断粘贴的是否是simple-mind-map的数据
-        let smmData = null
-        let useDefault = true
-        // 用户自定义处理
-        if (this.mindMap.opt.customHandleClipboardText) {
-          try {
-            const res = await this.mindMap.opt.customHandleClipboardText(text)
-            if (!isUndef(res)) {
-              useDefault = false
-              const checkRes = checkSmmFormatData(res)
-              if (checkRes.isSmm) {
-                smmData = checkRes.data
-              } else {
-                text = checkRes.data
-              }
-            }
-          } catch (error) {
-            errorHandler(ERROR_TYPES.CUSTOM_HANDLE_CLIPBOARD_TEXT_ERROR, error)
-          }
-        }
-        // 默认处理
-        if (useDefault) {
-          const checkRes = checkSmmFormatData(text)
-          if (checkRes.isSmm) {
-            smmData = checkRes.data
-          } else {
-            text = checkRes.data
-          }
-        }
-        if (smmData) {
-          this.mindMap.execCommand(
-            'INSERT_MULTI_CHILD_NODE',
-            [],
-            Array.isArray(smmData) ? smmData : [smmData]
-          )
-        } else {
-          text = htmlEscape(text)
-          const textArr = text
-            .split(new RegExp('\r?\n|(?<!\n)\r', 'g'))
-            .filter(item => {
-              return !!item
-            })
-          // 判断是否需要根据换行自动分割节点
-          if (textArr.length > 1 && handleIsSplitByWrapOnPasteCreateNewNode) {
-            handleIsSplitByWrapOnPasteCreateNewNode()
-              .then(() => {
-                this.mindMap.execCommand(
-                  'INSERT_MULTI_CHILD_NODE',
-                  [],
-                  textArr.map(item => {
-                    return {
-                      data: {
-                        text: item
-                      },
-                      children: []
-                    }
-                  })
-                )
-              })
-              .catch(() => {
-                this.mindMap.execCommand('INSERT_CHILD_NODE', false, [], {
-                  text
-                })
-              })
-          } else {
-            this.mindMap.execCommand('INSERT_CHILD_NODE', false, [], {
-              text
-            })
-          }
-        }
-      }
-      // 存在图片，则添加到当前激活节点
-      if (img && (!text || !onlyPasteTextWhenHasImgAndText)) {
-        try {
-          let imgData = null
-          // 自定义图片处理函数
-          if (handleNodePasteImg && typeof handleNodePasteImg === 'function') {
-            imgData = await handleNodePasteImg(img)
-          } else {
-            imgData = await loadImage(img)
-          }
-          if (this.activeNodeList.length > 0) {
-            this.activeNodeList.forEach(node => {
-              this.mindMap.execCommand('SET_NODE_IMAGE', node, {
-                url: imgData.url,
-                title: '',
-                width: imgData.size.width,
-                height: imgData.size.height
-              })
-            })
-          }
-        } catch (error) {
-          errorHandler(ERROR_TYPES.LOAD_CLIPBOARD_IMAGE_ERROR, error)
-        }
-      }
     } else {
-      // 粘贴节点数据
+      // 禁用剪贴板或不支持剪贴板时
+      // 粘贴画布内的节点数据
       if (this.beingCopyData) {
         this.mindMap.execCommand('PASTE_NODE', this.beingCopyData)
       }
@@ -1322,7 +1376,6 @@ class Render {
       nodeList.reverse()
     }
     nodeList.forEach(item => {
-      this.checkNodeLayerChange(item, exist)
       // 移动节点
       let nodeParent = item.parent
       let nodeBorthers = nodeParent.children
@@ -1347,25 +1400,6 @@ class Render {
       existParent.nodeData.children.splice(existIndex, 0, item.nodeData)
     })
     this.mindMap.render()
-  }
-
-  // 如果是富文本模式，那么某些层级变化需要更新样式
-  checkNodeLayerChange(node, toNode, toNodeIsParent = false) {
-    if (this.hasRichTextPlugin()) {
-      // 如果设置了自定义样式那么不需要更新
-      if (this.mindMap.richText.checkNodeHasCustomRichTextStyle(node)) {
-        return
-      }
-      const toIndex = toNodeIsParent ? toNode.layerIndex + 1 : toNode.layerIndex
-      let nodeLayerChanged =
-        (node.layerIndex === 1 && toIndex !== 1) ||
-        (node.layerIndex !== 1 && toIndex === 1)
-      if (nodeLayerChanged) {
-        node.setData({
-          resetRichText: true
-        })
-      }
-    }
   }
 
   //  移除节点
@@ -1551,7 +1585,6 @@ class Render {
       return !item.isRoot
     })
     nodeList.forEach(item => {
-      this.checkNodeLayerChange(item, toNode, true)
       this.removeNodeFromActiveList(item)
       removeFromParentNodeData(item)
       toNode.setData({
@@ -1566,60 +1599,24 @@ class Render {
   //   粘贴节点到节点
   pasteNode(data) {
     data = formatDataToArray(data)
-    if (this.activeNodeList.length <= 0 || data.length <= 0) {
-      return
-    }
-    this.activeNodeList.forEach(node => {
-      node.setData({
-        expand: true
-      })
-      node.nodeData.children.push(
-        ...data.map(item => {
-          const newData = simpleDeepClone(item)
-          createUidForAppointNodes([newData], true, node => {
-            // 可能跨层级复制，那么富文本样式需要更新
-            if (this.hasRichTextPlugin()) {
-              // 如果设置了自定义样式那么不需要更新
-              if (
-                this.mindMap.richText.checkNodeHasCustomRichTextStyle(node.data)
-              ) {
-                return
-              }
-              node.data.resetRichText = true
-            }
-          })
-          return newData
-        })
-      )
-    })
-    this.mindMap.render()
+    this.mindMap.execCommand('INSERT_MULTI_CHILD_NODE', [], data)
   }
 
   //  设置节点样式
   setNodeStyle(node, prop, value) {
-    let data = {
+    const data = {
       [prop]: value
-    }
-    // 如果开启了富文本，则需要应用到富文本上
-    if (this.hasRichTextPlugin()) {
-      this.mindMap.richText.setNotActiveNodeStyle(node, {
-        [prop]: value
-      })
     }
     this.setNodeDataRender(node, data)
     // 更新了连线的样式
     if (lineStyleProps.includes(prop)) {
-      ;(node.parent || node).renderLine(true)
+      (node.parent || node).renderLine(true)
     }
   }
 
   //  设置节点多个样式
   setNodeStyles(node, style) {
-    let data = { ...style }
-    // 如果开启了富文本，则需要应用到富文本上
-    if (this.hasRichTextPlugin()) {
-      this.mindMap.richText.setNotActiveNodeStyle(node, style)
-    }
+    const data = { ...style }
     this.setNodeDataRender(node, data)
     // 更新了连线的样式
     let props = Object.keys(style)
@@ -1630,7 +1627,7 @@ class Render {
       }
     })
     if (hasLineStyleProps) {
-      ;(node.parent || node).renderLine(true)
+      (node.parent || node).renderLine(true)
     }
   }
 
@@ -1840,6 +1837,7 @@ class Render {
       list.length > 1
     )
     let needRender = false
+    const alreadyIsRichText = data && data.richText
     list.forEach(item => {
       const newData = {
         inserting,
@@ -1851,7 +1849,7 @@ class Render {
         richText: isRichText,
         isActive: focusNewNode
       }
-      if (isRichText) newData.resetRichText = isRichText
+      if (isRichText && !alreadyIsRichText) newData.resetRichText = isRichText
       let generalization = item.node.getData('generalization')
       generalization = generalization
         ? Array.isArray(generalization)
@@ -1981,6 +1979,10 @@ class Render {
   //  设置节点数据，并判断是否渲染
   setNodeDataRender(node, data, notRender = false) {
     this.mindMap.execCommand('SET_NODE_DATA', node, data)
+    if (isNodeNotNeedRenderData(data)) {
+      this.mindMap.emit('node_tree_render_end')
+      return
+    }
     this.reRenderNodeCheckChange(node, notRender)
   }
 

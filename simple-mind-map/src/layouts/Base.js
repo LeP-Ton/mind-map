@@ -49,10 +49,7 @@ class Base {
 
   // 检查当前来源是否需要重新计算节点大小
   checkIsNeedResizeSources() {
-    return [
-      CONSTANTS.CHANGE_THEME,
-      CONSTANTS.TRANSFORM_TO_NORMAL_NODE
-    ].includes(this.renderer.renderSource)
+    return this.renderer.checkHasRenderSource(CONSTANTS.CHANGE_THEME)
   }
 
   // 层级类型改变
@@ -64,30 +61,8 @@ class Base {
 
   // 检查是否是结构布局改变重新渲染展开收起按钮占位元素
   checkIsLayoutChangeRerenderExpandBtnPlaceholderRect(node) {
-    if (this.renderer.renderSource === CONSTANTS.CHANGE_LAYOUT) {
+    if (this.renderer.checkHasRenderSource(CONSTANTS.CHANGE_LAYOUT)) {
       node.needRerenderExpandBtnPlaceholderRect = true
-    }
-  }
-
-  // 获取节点编号信息
-  getNumberInfo({ parent, ancestors, layerIndex, index }) {
-    // 编号
-    const hasNumberPlugin = !!this.mindMap.numbers
-    const parentNumberStr =
-      hasNumberPlugin && parent && parent._node.number
-        ? parent._node.number
-        : ''
-    const newNumberStr = hasNumberPlugin
-      ? this.mindMap.numbers.getNodeNumberStr({
-          ancestors,
-          layerIndex,
-          num: index + 1,
-          parentNumberStr
-        })
-      : ''
-    return {
-      hasNumberPlugin,
-      newNumberStr
     }
   }
 
@@ -99,20 +74,69 @@ class Base {
       lastData.isActive = curData.isActive
       lastData.expand = curData.expand
       lastData = JSON.stringify(lastData)
+    } else {
+      // 只在都有数据时才进行对比
+      return false
     }
     return lastData !== JSON.stringify(curData)
   }
 
+  // 检查库前置或后置内容是否改变了
+  checkNodeFixChange(newNode, nodeInnerPrefixData, nodeInnerPostfixData) {
+    // 库前置内容是否改变了
+    let isNodeInnerPrefixChange = false
+    this.mindMap.nodeInnerPrefixList.forEach(item => {
+      if (item.updateNodeData) {
+        const isChange = item.updateNodeData(newNode, nodeInnerPrefixData)
+        if (isChange) {
+          isNodeInnerPrefixChange = isChange
+        }
+      }
+    })
+    // 库后置内容是否改变了
+    let isNodeInnerPostfixChange = false
+    this.mindMap.nodeInnerPostfixList.forEach(item => {
+      if (item.updateNodeData) {
+        const isChange = item.updateNodeData(newNode, nodeInnerPostfixData)
+        if (isChange) {
+          isNodeInnerPostfixChange = isChange
+        }
+      }
+    })
+    return isNodeInnerPrefixChange || isNodeInnerPostfixChange
+  }
+
   //  创建节点实例
   createNode(data, parent, isRoot, layerIndex, index, ancestors) {
-    // 编号
-    const { hasNumberPlugin, newNumberStr } = this.getNumberInfo({
-      parent,
-      ancestors,
-      layerIndex,
-      index
-    })
     // 创建节点
+    // 库前置内容数据
+    const nodeInnerPrefixData = {}
+    this.mindMap.nodeInnerPrefixList.forEach(item => {
+      if (item.createNodeData) {
+        const [key, value] = item.createNodeData({
+          data,
+          parent,
+          ancestors,
+          layerIndex,
+          index
+        })
+        nodeInnerPrefixData[key] = value
+      }
+    })
+    // 库后置内容数据
+    const nodeInnerPostfixData = {}
+    this.mindMap.nodeInnerPostfixList.forEach(item => {
+      if (item.createNodeData) {
+        const [key, value] = item.createNodeData({
+          data,
+          parent,
+          ancestors,
+          layerIndex,
+          index
+        })
+        nodeInnerPostfixData[key] = value
+      }
+    })
     const uid = data.data.uid
     let newNode = null
     // 数据上保存了节点引用，那么直接复用节点
@@ -132,14 +156,12 @@ class Base {
       }
       this.cacheNode(data._node.uid, newNode)
       this.checkIsLayoutChangeRerenderExpandBtnPlaceholderRect(newNode)
-      // 判断编号是否改变
-      let isNumberChange = false
-      if (hasNumberPlugin) {
-        isNumberChange = this.mindMap.numbers.updateNumber(
-          newNode,
-          newNumberStr
-        )
-      }
+      // 库前置或后置内容是否改变了
+      const isNodeInnerFixChange = this.checkNodeFixChange(
+        newNode,
+        nodeInnerPrefixData,
+        nodeInnerPostfixData
+      )
       // 主题或主题配置改变了
       const isResizeSource = this.checkIsNeedResizeSources()
       // 节点数据改变了
@@ -153,7 +175,8 @@ class Base {
         isNodeDataChange ||
         isLayerTypeChange ||
         newNode.getData('resetRichText') ||
-        isNumberChange
+        newNode.getData('needUpdate') ||
+        isNodeInnerFixChange
       ) {
         newNode.getSize()
         newNode.needLayout = true
@@ -190,21 +213,20 @@ class Base {
       const isResizeSource = this.checkIsNeedResizeSources()
       // 点数据改变了
       const isNodeDataChange = this.checkIsNodeDataChange(lastData, data.data)
-      // 判断编号是否改变
-      let isNumberChange = false
-      if (hasNumberPlugin) {
-        isNumberChange = this.mindMap.numbers.updateNumber(
-          newNode,
-          newNumberStr
-        )
-      }
+      // 库前置或后置内容是否改变了
+      const isNodeInnerFixChange = this.checkNodeFixChange(
+        newNode,
+        nodeInnerPrefixData,
+        nodeInnerPostfixData
+      )
       // 重新计算节点大小和布局
       if (
         isResizeSource ||
         isNodeDataChange ||
         isLayerTypeChange ||
         newNode.getData('resetRichText') ||
-        isNumberChange
+        newNode.getData('needUpdate') ||
+        isNodeInnerFixChange
       ) {
         newNode.getSize()
         newNode.needLayout = true
@@ -222,7 +244,7 @@ class Base {
         layerIndex,
         isRoot,
         parent: !isRoot ? parent._node : null,
-        number: newNumberStr
+        ...nodeInnerPrefixData
       })
       // uid保存到数据上，为了节点复用
       data.data.uid = newUid
@@ -463,8 +485,10 @@ class Base {
       const end = list[len - 1]
       // 如果三点在一条直线，那么不用处理
       const isOneLine =
-        (start[0] === center[0] && center[0] === end[0]) ||
-        (start[1] === center[1] && center[1] === end[1])
+        (start[0].toFixed(0) === center[0].toFixed(0) &&
+          center[0].toFixed(0) === end[0].toFixed(0)) ||
+        (start[1].toFixed(0) === center[1].toFixed(0) &&
+          center[1].toFixed(0) === end[1].toFixed(0))
       if (!isOneLine) {
         const cStart = this.computeNewPoint(start, center, lineRadius)
         const cEnd = this.computeNewPoint(end, center, lineRadius)
