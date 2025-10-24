@@ -61,6 +61,27 @@ class Style {
     Style.cacheStyle = null
   }
 
+  // 添加阴影效果
+  addShadow(node) {
+    const styles = {
+      boxShadowHorizontal: this.merge('boxShadowHorizontal'),
+      boxShadowVertical: this.merge('boxShadowVertical'),
+      boxShadowBlur: this.merge('boxShadowBlur'),
+      boxShadowColor: this.merge('boxShadowColor')
+    }
+    
+    // 只有当有阴影配置时才添加阴影效果
+    if (styles.boxShadowColor && (styles.boxShadowHorizontal || styles.boxShadowVertical || styles.boxShadowBlur)) {
+      const offsetX = styles.boxShadowHorizontal || 0
+      const offsetY = styles.boxShadowVertical || 0
+      const blurRadius = styles.boxShadowBlur || 0
+      const color = styles.boxShadowColor
+      
+      // 使用 drop-shadow 滤镜函数
+      node.attr('filter', `drop-shadow(${offsetX}px ${offsetY}px ${blurRadius}px ${color})`)
+    }
+  }
+
   //  构造函数
   constructor(ctx) {
     this.ctx = ctx
@@ -132,11 +153,11 @@ class Style {
     }
   }
 
-  //  矩形
-  rect(node) {
-    this.shape(node)
-    node.radius(this.merge('borderRadius'))
-  }
+  // //  矩形
+  // rect(node) {
+  //   this.shape(node)
+  //   node.radius(this.merge('borderRadius')
+  // }
 
   // 形状
   shape(node) {
@@ -159,6 +180,7 @@ class Style {
         color: styles.fillColor
       })
     }
+    this.addShadow(node) // 添加阴影
     // 节点使用横线样式，不需要渲染非激活状态的边框样式
     // if (
     //   !this.ctx.isRoot &&

@@ -927,6 +927,27 @@ export default {
         "template": "classic4",
         "config": {
             // 自定义配置...
+            root: {
+                boxShadowHorizontal: 2,
+                boxShadowVertical: 2,
+                boxShadowBlur: 4,
+                boxShadowColor: 'rgba(0,0,0,0.3)',
+                borderRadius: 20
+              },
+              second: {
+                // ... 其他样式
+                boxShadowHorizontal: 2,
+                boxShadowVertical: 2,
+                boxShadowBlur: 4,
+                boxShadowColor: 'rgba(0,0,0,0.3)'
+              },
+              node: {
+                // ... 其他样式
+                boxShadowHorizontal: 2,
+                boxShadowVertical: 2,
+                boxShadowBlur: 4,
+                boxShadowColor: 'rgba(0,0,0,0.3)'
+              }
         }
     },
     "layout": "logicalStructure",
