@@ -2,6 +2,9 @@
 
 详细文档见：[https://github.com/wanglin2/mind-map](https://github.com/wanglin2/mind-map)
 
+# 环境准备
+1. node版本：v16.20.2
+
 # 打包项目
 1. 更新版本号: npm version patch
 2. 本地安装vite: npm install vite@4.5.3 --save-dev（vite@4 是最后一个支持 Node 16 的版本。）

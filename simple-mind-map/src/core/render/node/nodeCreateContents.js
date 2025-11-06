@@ -557,7 +557,7 @@ function measureCustomNodeContentSize(content) {
   this.mindMap.commonCaches.measureCustomNodeContentSizeEl.innerHTML = ''
   this.mindMap.commonCaches.measureCustomNodeContentSizeEl.appendChild(content)
   let rect =
-  content.getBoundingClientRect()
+    this.mindMap.commonCaches.measureCustomNodeContentSizeEl.getBoundingClientRect()
   return {
     width: rect.width,
     height: rect.height
