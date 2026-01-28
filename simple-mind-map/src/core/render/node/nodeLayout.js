@@ -178,7 +178,7 @@ function getNodeRect() {
   }
 }
 
-//  定位节点内容
+// NOTE 定位节点内容
 function layout() {
   if (!this.group) return
   // 清除之前的内容

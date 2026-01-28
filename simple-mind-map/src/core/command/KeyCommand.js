@@ -11,6 +11,9 @@ export default class KeyCommand {
     }
     this.shortcutMapCache = {}
     this.isPause = false
+    this.pauseKeys = [
+      //支持"Del"，"Backspace"，"Control+c"，不支持"Del|Backspace"格式
+    ]
     this.isInSvg = false
     this.isStopCheckInSvg = false
     this.defaultEnableCheck = this.defaultEnableCheck.bind(this)
@@ -30,13 +33,21 @@ export default class KeyCommand {
   }
 
   //  暂停快捷键响应
-  pause() {
-    this.isPause = true
+  pause(keys) {
+    if (keys && keys.length > 0) {
+      this.pauseKeys.push(...keys)
+    } else {
+      this.isPause = true
+    }
   }
 
   //  恢复快捷键响应
-  recovery() {
-    this.isPause = false
+  recovery(keys) {
+    if (keys && keys.length > 0) {
+      this.pauseKeys = this.pauseKeys.filter(item => !keys.includes(item))
+    } else {
+      this.isPause = false
+    }
   }
 
   //  保存当前注册的快捷键数据，然后清空快捷键数据
@@ -123,6 +134,7 @@ export default class KeyCommand {
     if (!checkFn(e)) return
     if (
       this.isPause ||
+      this.pauseKeys.some(i=>this.checkKey(e, i)) ||
       (enableShortcutOnlyWhenMouseInSvg &&
         !this.isStopCheckInSvg &&
         !this.isInSvg)

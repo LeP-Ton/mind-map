@@ -1,5 +1,5 @@
 {
-  "name": "leo-mind-map",
+  "name": "@case-mind-map/core",
   "version": "0.14.4",
   "description": "一个简单的web在线思维导图",
   "authors": [

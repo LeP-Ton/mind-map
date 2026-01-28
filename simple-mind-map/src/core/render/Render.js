@@ -178,7 +178,7 @@ class Render {
     if (openPerformance) {
       this.mindMap.on('view_data_change', onViewDataChange)
     }
-    // 文本编辑时实时更新节点大小
+    // NOTE 文本编辑时实时更新节点大小
     this.onNodeTextEditChange = debounce(this.onNodeTextEditChange, 100, this)
     if (openRealtimeRenderOnNodeTextEdit) {
       this.mindMap.on('node_text_edit_change', this.onNodeTextEditChange)
@@ -215,7 +215,7 @@ class Render {
     // }
   }
 
-  // 监听文本编辑事件，实时更新节点大小
+  // NOTE 监听文本编辑事件，实时更新节点大小
   onNodeTextEditChange({ node, text }) {
     node._textData = node.createTextNode(text)
     const { width, height } = node.getNodeRect()

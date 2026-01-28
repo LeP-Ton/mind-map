@@ -600,7 +600,7 @@ class MindMapNode {
     }
   }
 
-  // 递归渲染
+  // NOTE 递归渲染
   // forceRender：强制渲染，无论是否处于画布可视区域
   // async：异步渲染
   render(callback = () => {}, forceRender = false, async = false) {
