@@ -1,5 +1,5 @@
 {
-  "name": "@case-mind-map/core",
+  "name": "case-mind-map",
   "version": "0.14.5",
   "description": "一个简单的web在线思维导图",
   "authors": [
